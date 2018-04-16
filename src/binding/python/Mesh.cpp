@@ -2,11 +2,15 @@
 #include <pybind11/stl.h>
 
 #include "openPMD/Mesh.hpp"
+#include "openPMD/backend/MeshRecordComponent.hpp"
 
 #include <string>
 
 namespace py = pybind11;
 using namespace openPMD;
+
+using PyRecordsContainer = Container< MeshRecordComponent >;
+PYBIND11_MAKE_OPAQUE(PyRecordsContainer)
 
 
 void init_Mesh(py::module &m) {
@@ -41,6 +45,8 @@ void init_Mesh(py::module &m) {
         .def_property_readonly("time_offset", &Mesh::timeOffset<float>)
         .def_property_readonly("time_offset", &Mesh::timeOffset<double>)
         .def_property_readonly("time_offset", &Mesh::timeOffset<long double>)
+
+        .def_readwrite("records", &Mesh::records)
         //! @todo missing specializations
         // .def("set_time_offset", &Mesh::setTimeOffset<float>)
         // .def("set_time_offset", &Mesh::setTimeOffset<double>)

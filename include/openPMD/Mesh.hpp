@@ -154,6 +154,10 @@ public:
     template< typename T >
     Mesh& setTimeOffset(T timeOffset);
 
+    /** Access to records.
+     */
+    Container< MeshRecordComponent > records;
+
 private:
     Mesh();
 
