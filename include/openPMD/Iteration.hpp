@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -54,11 +54,11 @@ public:
     /** Set the global reference time for this iteration.
      *
      * @tparam  T       Floating point type of user-selected precision (e.g. float, double).
-     * @param   time    Global reference time for this iteration.
+     * @param   newTime Global reference time for this iteration.
      * @return  Reference to modified iteration.
      */
     template< typename T >
-    Iteration& setTime(T time);
+    Iteration& setTime(T newTime);
 
     /**
      * @tparam  T   Floating point type of user-selected precision (e.g. float, double).
@@ -68,12 +68,12 @@ public:
     T dt() const;
     /** Set the time step used to reach this iteration.
      *
-     * @tparam  T   Floating point type of user-selected precision (e.g. float, double).
-     * @param   dt  Time step used to reach this iteration.
+     * @tparam  T     Floating point type of user-selected precision (e.g. float, double).
+     * @param   newDt Time step used to reach this iteration.
      * @return  Reference to modified iteration.
      */
     template< typename T >
-    Iteration& setDt(T dt);
+    Iteration& setDt(T newDt);
 
     /**
      * @return Conversion factor to convert time and dt to seconds.
@@ -81,10 +81,10 @@ public:
     double timeUnitSI() const;
     /** Set the conversion factor to convert time and dt to seconds.
      *
-     * @param timeUnitSI
-     * @return  Reference to modified iteration.
+     * @param  newTimeUnitSI
+     * @return Reference to modified iteration.
      */
-    Iteration& setTimeUnitSI(double timeUnitSI);
+    Iteration& setTimeUnitSI(double newTimeUnitSI);
 
     Container< Mesh > meshes;
     Container< ParticleSpecies > particles; //particleSpecies?
@@ -96,6 +96,8 @@ private:
     void flushGroupBased(uint64_t);
     void flush();
     void read();
+
+    virtual void linkHierarchy(std::shared_ptr< Writable > const& w);
 };  //Iteration
 
 extern template

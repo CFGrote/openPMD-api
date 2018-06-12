@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -20,10 +20,8 @@
  */
 #include "openPMD/IO/HDF5/ParallelHDF5IOHandler.hpp"
 
-#if openPMD_HAVE_HDF5 && openPMD_HAVE_MPI
-#   include "openPMD/auxiliary/StringManip.hpp"
+#if openPMD_HAVE_MPI
 #   include <mpi.h>
-#   include <boost/filesystem.hpp>
 #endif
 
 #include <iostream>
@@ -32,7 +30,6 @@
 namespace openPMD
 {
 #if openPMD_HAVE_HDF5 && openPMD_HAVE_MPI
-#   include "openPMD/auxiliary/StringManip.hpp"
 #   ifdef DEBUG
 #       define ASSERT(CONDITION, TEXT) { if(!(CONDITION)) throw std::runtime_error(std::string((TEXT))); }
 #   else
@@ -83,12 +80,22 @@ ParallelHDF5IOHandlerImpl::~ParallelHDF5IOHandlerImpl()
     }
 }
 #else
+#   if openPMD_HAVE_MPI
+ParallelHDF5IOHandler::ParallelHDF5IOHandler(std::string const& path,
+                                             AccessType at,
+                                             MPI_Comm comm)
+        : AbstractIOHandler(path, at, comm)
+{
+    throw std::runtime_error("openPMD-api built without HDF5 support");
+}
+#   else
 ParallelHDF5IOHandler::ParallelHDF5IOHandler(std::string const& path,
                                              AccessType at)
         : AbstractIOHandler(path, at)
 {
-    throw std::runtime_error("openPMD-api built without parallel HDF5 support");
+    throw std::runtime_error("openPMD-api built without parallel support and without HDF5 support");
 }
+#   endif
 
 ParallelHDF5IOHandler::~ParallelHDF5IOHandler()
 { }

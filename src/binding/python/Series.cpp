@@ -1,27 +1,35 @@
+/* Copyright 2018 Axel Huebl
+ *
+ * This file is part of openPMD-api.
+ *
+ * openPMD-api is free software: you can redistribute it and/or modify
+ * it under the terms of of either the GNU General Public License or
+ * the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * openPMD-api is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License and the GNU Lesser General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * and the GNU Lesser General Public License along with openPMD-api.
+ * If not, see <http://www.gnu.org/licenses/>.
+ */
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-#include <pybind11/stl_bind.h>
 
 #include "openPMD/Series.hpp"
-#include "openPMD/Iteration.hpp"
-#include "openPMD/backend/Container.hpp"
 
 namespace py = pybind11;
 using namespace openPMD;
 
-using PyIterationContainer = Container< Iteration, uint64_t >;
-PYBIND11_MAKE_OPAQUE(PyIterationContainer)
 
 void init_Series(py::module &m) {
-    py::bind_map< PyIterationContainer >(m, "Iteration_Container");
-
     py::class_<Series>(m, "Series")
 
-        // private
-        //.def(py::init<std::string const &, AccessType>())
-
-        .def_static("create", [](std::string const & filepath){ return Series::create(filepath); })
-        .def_static("read", [](std::string const & filepath){ return Series::read(filepath); })
+        .def(py::init<std::string const&, AccessType>())
 
         .def_property_readonly("openPMD", &Series::openPMD)
         .def("set_openPMD", &Series::setOpenPMD)

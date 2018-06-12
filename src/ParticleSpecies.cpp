@@ -1,5 +1,26 @@
-#include "openPMD/auxiliary/StringManip.hpp"
+/* Copyright 2017-2018 Fabian Koller
+ *
+ * This file is part of openPMD-api.
+ *
+ * openPMD-api is free software: you can redistribute it and/or modify
+ * it under the terms of of either the GNU General Public License or
+ * the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * openPMD-api is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License and the GNU Lesser General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * and the GNU Lesser General Public License along with openPMD-api.
+ * If not, see <http://www.gnu.org/licenses/>.
+ */
 #include "openPMD/ParticleSpecies.hpp"
+
+#include <algorithm>
 
 
 namespace openPMD
@@ -27,7 +48,6 @@ ParticleSpecies::read()
         {
             pOpen.path = "particlePatches";
             IOHandler->enqueue(IOTask(&particlePatches, pOpen));
-            IOHandler->flush();
             particlePatches.read();
         } else
         {
@@ -38,15 +58,17 @@ ParticleSpecies::read()
             IOHandler->enqueue(IOTask(&r, aList));
             IOHandler->flush();
 
-            auto begin = aList.attributes->begin();
-            auto end = aList.attributes->end();
-            auto value = std::find(begin, end, "value");
-            auto shape = std::find(begin, end, "shape");
-            if( value != end && shape != end )
+            auto attrBegin = aList.attributes->begin();
+            auto attrEnd = aList.attributes->end();
+            auto value = std::find(attrBegin, attrEnd, "value");
+            auto shape = std::find(attrBegin, attrEnd, "shape");
+            if( value != attrEnd && shape != attrEnd )
             {
                 RecordComponent& rc = r[RecordComponent::SCALAR];
-                rc.m_isConstant = true;
+                *rc.m_isConstant = true;
+                rc.m_writable->parent = r.m_writable->parent;
                 rc.parent = r.parent;
+                rc.m_writable->abstractFilePosition = r.m_writable->abstractFilePosition;
                 rc.abstractFilePosition = r.abstractFilePosition;
             }
             r.read();
@@ -66,8 +88,9 @@ ParticleSpecies::read()
         IOHandler->enqueue(IOTask(&r, dOpen));
         IOHandler->flush();
         RecordComponent& rc = r[RecordComponent::SCALAR];
-        rc.abstractFilePosition = r.abstractFilePosition;
         rc.parent = r.parent;
+        IOHandler->enqueue(IOTask(&rc, dOpen));
+        IOHandler->flush();
         rc.written = false;
         rc.resetDataset(Dataset(*dOpen.dtype, *dOpen.extent));
         rc.written = true;
@@ -83,57 +106,27 @@ ParticleSpecies::read()
 void
 ParticleSpecies::flush(std::string const& path)
 {
-    Container< Record >::flush(path);
-
-    for( auto& record : *this )
-        record.second.flush(record.first);
-
-    particlePatches.flush("particlePatches");
-    for( auto& patch : particlePatches )
-        patch.second.flush(patch.first);
-}
-
-template<>
-Container< ParticleSpecies >::mapped_type&
-Container< ParticleSpecies >::operator[](Container< ParticleSpecies >::key_type const& key)
-{
-    auto it = this->find(key);
-    if( it != this->end() )
-        return it->second;
-    else
+    if( IOHandler->accessType == AccessType::READ_ONLY )
     {
-        ParticleSpecies ps = ParticleSpecies();
-        ps.IOHandler = IOHandler;
-        ps.parent = this;
-        auto& ret = this->insert({key, ps}).first->second;
-        /* enforce these two RecordComponents as required by the standard */
-        ret["position"].setUnitDimension({{UnitDimension::L, 1}});
-        ret["positionOffset"].setUnitDimension({{UnitDimension::L, 1}});
-        ret.particlePatches.parent = &ret;
-        ret.particlePatches.IOHandler = ret.IOHandler;
-        return ret;
-    }
-}
-
-template<>
-Container< ParticleSpecies >::mapped_type&
-Container< ParticleSpecies >::operator[](Container< ParticleSpecies >::key_type && key)
-{
-    auto it = this->find(key);
-    if( it != this->end() )
-        return it->second;
-    else
+        for( auto& record : *this )
+            record.second.flush(record.first);
+        for( auto& patch : particlePatches )
+            patch.second.flush(patch.first);
+    } else
     {
-        ParticleSpecies ps = ParticleSpecies();
-        ps.IOHandler = IOHandler;
-        ps.parent = this;
-        auto& ret = this->insert({std::move(key), ps}).first->second;
-        /* enforce these two RecordComponents as required by the standard */
-        ret["position"].setUnitDimension({{UnitDimension::L, 1}});
-        ret["positionOffset"].setUnitDimension({{UnitDimension::L, 1}});
-        ret.particlePatches.parent = &ret;
-        ret.particlePatches.IOHandler = ret.IOHandler;
-        return ret;
+        Container< Record >::flush(path);
+
+        for( auto& record : *this )
+            record.second.flush(record.first);
+
+        if( particlePatches.find("numParticles") != particlePatches.end()
+            && particlePatches.find("numParticlesOffset") != particlePatches.end()
+            && particlePatches.size() >= 3 )
+        {
+            particlePatches.flush("particlePatches");
+            for( auto& patch : particlePatches )
+                patch.second.flush(patch.first);
+        }
     }
 }
 } // openPMD

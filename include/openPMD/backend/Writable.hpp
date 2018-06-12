@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -20,25 +20,34 @@
  */
 #pragma once
 
+#include <string>
 #include <memory>
 
 
 namespace openPMD
 {
+namespace test
+{
+struct TestHelper;
+} // test
 class AbstractFilePosition;
 class AbstractIOHandler;
+class Attributable;
 
-/** @brief Layer to mirror structure of data logiclly and in file.
+/** @brief Layer to mirror structure of logical data and persistent data in file.
  *
  * Hierarchy of objects (datasets, groups, attributes, ...) in openPMD is
  * managed in this class.
  * It also indicates the current synchronization state between logical
- * and persistent data: - whether the object has been created in peristent form
+ * and persistent data: - whether the object has been created in persistent form
  *                      - whether the logical object has been modified compared
  *                        to last persistent state
  */
 class Writable
 {
+    friend class Attributable;
+    template< typename T_elem >
+    friend class BaseRecord;
     template<
             typename T,
             typename T_key,
@@ -46,21 +55,28 @@ class Writable
     >
     friend class Container;
     friend class Iteration;
+    friend class Mesh;
+    friend class ParticleSpecies;
+    friend class Series;
+    friend class Record;
     friend class ADIOS1IOHandlerImpl;
     friend class ParallelADIOS1IOHandlerImpl;
     friend class ADIOS2IOHandlerImpl;
     friend class HDF5IOHandlerImpl;
     friend class ParallelHDF5IOHandlerImpl;
+    friend struct test::TestHelper;
     friend std::string concrete_h5_file_position(Writable*);
+    friend std::string concrete_bp1_file_position(Writable*);
 
 public:
-    Writable();
+    Writable(Attributable* = nullptr);
     virtual ~Writable();
 
-protected:
+private:
     std::shared_ptr< AbstractFilePosition > abstractFilePosition;
-    Writable* parent;
     std::shared_ptr< AbstractIOHandler > IOHandler;
+    Attributable* attributable;
+    Writable* parent;
     bool dirty;
     bool written;
 };

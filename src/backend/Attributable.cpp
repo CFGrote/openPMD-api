@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -28,19 +28,23 @@
 namespace openPMD
 {
 Attributable::Attributable()
-        : m_attributes{std::make_shared< A_MAP >()}
+        : m_writable{std::make_shared< Writable >(this)},
+          abstractFilePosition{m_writable->abstractFilePosition.get()},
+          IOHandler{m_writable->IOHandler.get()},
+          parent{m_writable->parent},
+          dirty{m_writable->dirty},
+          written{m_writable->written},
+          m_attributes{std::make_shared< A_MAP >()}
 { }
 
 Attributable::Attributable(Attributable const& rhs)
-// Deep-copy the entries in the Attribute map since the lifetime of the rhs does not end
-        : Writable{rhs},
-          m_attributes{std::make_shared< A_MAP >(*rhs.m_attributes)}
-{ }
-
-Attributable::Attributable(Attributable&& rhs)
-// Take ownership of the Attribute map pointer since the lifetime of the rhs does end
-        : Writable{rhs},
-          m_attributes{std::move(rhs.m_attributes)}
+        : m_writable{rhs.m_writable},
+          abstractFilePosition{rhs.m_writable->abstractFilePosition.get()},
+          IOHandler{rhs.m_writable->IOHandler.get()},
+          parent{rhs.m_writable->parent},
+          dirty{rhs.m_writable->dirty},
+          written{rhs.m_writable->written},
+          m_attributes{rhs.m_attributes}
 { }
 
 Attributable&
@@ -51,13 +55,6 @@ Attributable::operator=(Attributable const& a)
         Attributable tmp(a);
         std::swap(m_attributes, tmp.m_attributes);
     }
-    return *this;
-}
-
-Attributable&
-Attributable::operator=(Attributable&& a)
-{
-    m_attributes = std::move(a.m_attributes);
     return *this;
 }
 
@@ -138,7 +135,6 @@ Attributable::flushAttributes()
             aWrite.resource = getAttribute(att_name).getResource();
             aWrite.dtype = getAttribute(att_name).dtype;
             IOHandler->enqueue(IOTask(this, aWrite));
-            IOHandler->flush();
         }
 
         dirty = false;
@@ -157,15 +153,15 @@ Attributable::readAttributes()
     std::sort(aList.attributes->begin(), aList.attributes->end());
     std::sort(written_attributes.begin(), written_attributes.end());
 
-    std::set< std::string > attributes;
+    std::set< std::string > tmpAttributes;
     std::set_difference(aList.attributes->begin(), aList.attributes->end(),
                         written_attributes.begin(), written_attributes.end(),
-                        std::inserter(attributes, attributes.begin()));
+                        std::inserter(tmpAttributes, tmpAttributes.begin()));
 
     using DT = Datatype;
     Parameter< Operation::READ_ATT > aRead;
 
-    for( auto const& att_name : attributes )
+    for( auto const& att_name : tmpAttributes )
     {
         aRead.name = att_name;
         std::string att = auxiliary::strip(att_name, {'\0'});
@@ -173,7 +169,7 @@ Attributable::readAttributes()
         try
         {
             IOHandler->flush();
-        } catch( unsupported_data_error e )
+        } catch( unsupported_data_error const& e )
         {
             std::cerr << "Skipping non-standard attribute "
                       << att << " ("
@@ -268,9 +264,20 @@ Attributable::readAttributes()
         }
     }
 
-    IOHandler->flush();
     dirty = false;
 }
+
+void
+Attributable::linkHierarchy(std::shared_ptr< Writable > const& w)
+{
+    auto handler = w->IOHandler;
+    m_writable->IOHandler = handler;
+    this->IOHandler = handler.get();
+    auto writable = w.get();
+    m_writable->parent = writable;
+    this->parent = writable;
+}
+
 
 void warnWrongDtype(std::string const& key,
                     Datatype store,

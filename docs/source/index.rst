@@ -5,7 +5,13 @@
 
 This library provides an abstract API for openPMD file handling.
 It provides both support for writing & reading into various formats and works both serial and parallel (MPI).
-Implemented (and planned) backends include HDF5 and ADIOS.
+Implemented backends include HDF5 and ADIOS.
+
+.. note::
+
+   Are you looking for our latest Doxygen docs for the API?
+
+   See http://www.openpmd.org/openPMD-api
 
 .. attention::
 
@@ -24,6 +30,22 @@ Implemented (and planned) backends include HDF5 and ADIOS.
        display:none;
    }
    </style>
+
+Supported openPMD Standard Versions
+-----------------------------------
+
+openPMD-api is a library using `semantic versioning <https://semver.org/>`_, starting with version 1.0.0.
+
+The supported version of the `openPMD standard <https://github.com/openPMD/openPMD-standard>`_ are reflected as follows:
+``standardMAJOR.apiMAJOR.apiMINOR``.
+
+======================= ===================================
+openPMD-api version     supported openPMD standard versions
+======================= ===================================
+``0.1.0-0.2.0`` (alpha) ``1.0.0-1.1.0``
+``1.0.0+``              ``1.0.1-1.1.0`` (not released yet)
+``2.0.0+``              ``2.0.0+``      (not released yet)
+======================= ===================================
 
 ************
 Installation

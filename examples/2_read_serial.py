@@ -6,11 +6,12 @@ Copyright 2018 openPMD contributors
 Authors: Axel Huebl
 License: LGPLv3+
 """
-from openPMD import Series
+import openPMD
 
 
 if __name__ == "__main__":
-    series = Series.read("../samples/git-sample/data%T.h5")
+    series = openPMD.Series("../samples/git-sample/data%T.h5",
+                            openPMD.Access_Type.read_only)
     print("Read a Series with openPMD standard version %s" %
           series.openPMD)
 
@@ -30,22 +31,23 @@ if __name__ == "__main__":
         print("\t {0}".format(ps))
     print("")
 
-    E = i.meshes["E"]
-    # TODO: add __getitem__ to openPMD.Mesh and openPMD.Particle object for
-    #       non-scalar records: return a record component
-    # E_x = i.meshes["E"]["x"]
-    # TODO: add extent and dtype property to record components
-    # Extent extent = E_x.get_extent  # or as property: E_x.extent
-    # print("Field E.x has shape ({0}) and has datatype {1}".format(
-    #     extent, E_x.dtype));
+    E_x = i.meshes["E"]["x"]
+    shape = E_x.shape
 
+    print("Field E.x has shape {0} and datatype {1}".format(
+          shape, E_x.dtype))
+
+    offset = openPMD.Extent([1, 1, 1])
+    extent = openPMD.Extent([2, 2, 1])
     # TODO buffer protocol / numpy bindings
     # chunk_data = E_x[1:3, 1:3, 1:2]
+    chunk_data = E_x.load_chunk(offset, extent)
     # print("Queued the loading of a single chunk from disk, "
     #       "ready to execute")
-    # series.flush()
-    # print("Chunk has been read from disk\n"
-    #       "Read chunk contains:")
+    series.flush()
+    print("Chunk has been read from disk\n"
+          "Read chunk contains:")
+    print(chunk_data)
     # for row in range(2):
     #     for col in range(2):
     #         print("\t({0}|{1}|{2})\t{3}".format(

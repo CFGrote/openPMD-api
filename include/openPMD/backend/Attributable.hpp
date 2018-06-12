@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -23,6 +23,7 @@
 #include "openPMD/IO/AbstractIOHandler.hpp"
 #include "openPMD/backend/Attribute.hpp"
 #include "openPMD/backend/Writable.hpp"
+#include "openPMD/auxiliary/OutOfRangeMsg.hpp"
 
 #include <exception>
 #include <map>
@@ -33,6 +34,13 @@
 
 namespace openPMD
 {
+namespace traits
+{
+    template< typename T >
+    struct GenerationPolicy;
+} // traits
+class AbstractFilePosition;
+
 class no_such_attribute_error : public std::runtime_error
 {
 public:
@@ -51,20 +59,33 @@ public:
  * Mandatory and user-defined Attributes and their data for every object in the
  * openPMD hierarchy are stored and managed through this class.
  */
-class Attributable : public Writable
+class Attributable
 {
     using A_MAP = std::map< std::string, Attribute >;
+    friend Writable* getWritable(Attributable*);
+    template< typename T_elem >
+    friend class BaseRecord;
+    template<
+        typename T,
+        typename T_key,
+        typename T_container
+    >
+    friend class Container;
+    template< typename T >
+    friend struct traits::GenerationPolicy;
+    friend class Iteration;
+    friend class Series;
 
 public:
     Attributable();
     Attributable(Attributable const&);
-    Attributable(Attributable&&);
+    Attributable(Attributable&&) = delete;
 
     virtual ~Attributable()
     { }
 
     Attributable& operator=(Attributable const&);
-    Attributable& operator=(Attributable&&);
+    Attributable& operator=(Attributable&&) = delete;
 
     /** Populate Attribute of provided name with provided value.
      *
@@ -82,7 +103,7 @@ public:
      *
      * @throw   no_such_attribute_error If no Attribute is currently stored with the provided key.
      * @param   key Key (i.e. name) of the Attribute to retrieve value for.
-     * @return  Stored Attribute in Variadic form.
+     * @return  Stored Attribute in Variant form.
      */
     Attribute getAttribute(std::string const& key) const;
     /** Remove Attribute of provided value both logically and physically.
@@ -159,19 +180,41 @@ protected:
     template< typename T >
     std::vector< T > readVectorFloatingpoint(std::string const& key) const;
 
+    std::shared_ptr< Writable > m_writable;
+    /* views into the resources held by m_writable
+     * purely for convenience so code that uses these does not have to go through m_wriable-> */
+    AbstractFilePosition* abstractFilePosition;
+    AbstractIOHandler* IOHandler;
+    Writable* parent;
+    bool& dirty;
+    bool& written;
+
 private:
+    virtual void linkHierarchy(std::shared_ptr< Writable > const& w);
+
     std::shared_ptr< A_MAP > m_attributes;
 };  //Attributable
 
-void warnWrongDtype(std::string const& key,
-                    Datatype store,
-                    Datatype request);
+
+void
+warnWrongDtype(std::string const& key,
+               Datatype store,
+               Datatype request);
 
 //TODO explicitly instanciate Attributable::setAttribute for all T in Datatype
 template< typename T >
 inline bool
 Attributable::setAttribute(std::string const& key, T&& value)
 {
+    if( IOHandler && AccessType::READ_ONLY == IOHandler->accessType )
+    {
+        auxiliary::OutOfRangeMsg const out_of_range_msg(
+            "Attribute",
+            "can not be set (read-only)."
+        );
+        throw no_such_attribute_error(out_of_range_msg(key));
+    }
+
     dirty = true;
     auto it = m_attributes->lower_bound(key);
     if( it != m_attributes->end() && !m_attributes->key_comp()(key, it->first) )

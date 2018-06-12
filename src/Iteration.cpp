@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -18,6 +18,7 @@
  * and the GNU Lesser General Public License along with openPMD-api.
  * If not, see <http://www.gnu.org/licenses/>.
  */
+#include <openPMD/backend/Writable.hpp>
 #include "openPMD/auxiliary/StringManip.hpp"
 #include "openPMD/Dataset.hpp"
 #include "openPMD/Iteration.hpp"
@@ -43,28 +44,28 @@ Iteration::Iteration(Iteration const& i)
     IOHandler = i.IOHandler;
     parent = i.parent;
     meshes.IOHandler = IOHandler;
-    meshes.parent = this;
+    meshes.parent = this->m_writable.get();
     particles.IOHandler = IOHandler;
-    particles.parent = this;
+    particles.parent = this->m_writable.get();
 }
 
 template< typename T >
 Iteration&
-Iteration::setTime(T time)
+Iteration::setTime(T newTime)
 {
     static_assert(std::is_floating_point< T >::value, "Type of attribute must be floating point");
 
-    setAttribute("time", time);
+    setAttribute("time", newTime);
     return *this;
 }
 
 template< typename T >
 Iteration&
-Iteration::setDt(T dt)
+Iteration::setDt(T newDt)
 {
     static_assert(std::is_floating_point< T >::value, "Type of attribute must be floating point");
 
-    setAttribute("dt", dt);
+    setAttribute("dt", newDt);
     return *this;
 }
 
@@ -75,9 +76,9 @@ Iteration::timeUnitSI() const
 }
 
 Iteration&
-Iteration::setTimeUnitSI(double timeUnitSI)
+Iteration::setTimeUnitSI(double newTimeUnitSI)
 {
-    setAttribute("timeUnitSI", timeUnitSI);
+    setAttribute("timeUnitSI", newTimeUnitSI);
     return *this;
 }
 
@@ -87,41 +88,35 @@ Iteration::flushFileBased(uint64_t i)
     if( !written )
     {
         /* create file */
-        Series* s = dynamic_cast<Series *>(parent->parent);
+        Series* s = dynamic_cast<Series *>(parent->attributable->parent->attributable);
         Parameter< Operation::CREATE_FILE > fCreate;
         fCreate.name = auxiliary::replace_first(s->iterationFormat(), "%T", std::to_string(i));
         IOHandler->enqueue(IOTask(s, fCreate));
-        IOHandler->flush();
 
         /* create basePath */
         Parameter< Operation::CREATE_PATH > pCreate;
         pCreate.path = auxiliary::replace_first(s->basePath(), "%T/", "");
         IOHandler->enqueue(IOTask(&s->iterations, pCreate));
-        IOHandler->flush();
 
         /* create iteration path */
         pCreate.path = std::to_string(i);
         IOHandler->enqueue(IOTask(this, pCreate));
-        IOHandler->flush();
     } else
     {
         /* open file */
-        Series* s = dynamic_cast<Series *>(parent->parent);
+        Series* s = dynamic_cast<Series *>(parent->attributable->parent->attributable);
         Parameter< Operation::OPEN_FILE > fOpen;
         fOpen.name = auxiliary::replace_last(s->iterationFormat(), "%T", std::to_string(i));
         IOHandler->enqueue(IOTask(s, fOpen));
-        IOHandler->flush();
 
         /* open basePath */
         Parameter< Operation::OPEN_PATH > pOpen;
         pOpen.path = auxiliary::replace_first(s->basePath(), "%T/", "");
         IOHandler->enqueue(IOTask(&s->iterations, pOpen));
-        IOHandler->flush();
 
         /* open iteration path */
         pOpen.path = std::to_string(i);
         IOHandler->enqueue(IOTask(this, pOpen));
-        IOHandler->flush();
     }
 
     flush();
@@ -136,7 +131,6 @@ Iteration::flushGroupBased(uint64_t i)
         Parameter< Operation::CREATE_PATH > pCreate;
         pCreate.path = std::to_string(i);
         IOHandler->enqueue(IOTask(this, pCreate));
-        IOHandler->flush();
     }
 
     flush();
@@ -145,36 +139,43 @@ Iteration::flushGroupBased(uint64_t i)
 void
 Iteration::flush()
 {
-    /* Find the root point [Series] of this file,
-     * meshesPath and particlesPath are stored there */
-    Writable *w = this;
-    while( w->parent )
-        w = w->parent;
-    Series* s = dynamic_cast<Series *>(w);
-
-    //TODO warn if openPMD >= 1.1.0, mp is set and no meshes
-    if( !meshes.empty() )
+    if( IOHandler->accessType == AccessType::READ_ONLY )
     {
-        if( !s->containsAttribute("meshesPath") )
-            s->setMeshesPath("meshes/");
-        s->flushMeshesPath();
-        meshes.flush(s->meshesPath());
         for( auto& m : meshes )
             m.second.flush(m.first);
-    }
-
-    //TODO warn if openPMD >= 1.1.0, pp is set and no particles
-    if( !particles.empty() )
-    {
-        if( !s->containsAttribute("particlesPath") )
-            s->setParticlesPath("particles/");
-        s->flushParticlesPath();
-        particles.flush(s->particlesPath());
         for( auto& species : particles )
             species.second.flush(species.first);
-    }
+    } else
+    {
+        /* Find the root point [Series] of this file,
+         * meshesPath and particlesPath are stored there */
+        Writable *w = this->parent;
+        while( w->parent )
+            w = w->parent;
+        Series* s = dynamic_cast<Series *>(w->attributable);
 
-    flushAttributes();
+        if( !meshes.empty() )
+        {
+            if( !s->containsAttribute("meshesPath") )
+                s->setMeshesPath("meshes/");
+            s->flushMeshesPath();
+            meshes.flush(s->meshesPath());
+            for( auto& m : meshes )
+                m.second.flush(m.first);
+        }
+
+        if( !particles.empty() )
+        {
+            if( !s->containsAttribute("particlesPath") )
+                s->setParticlesPath("particles/");
+            s->flushParticlesPath();
+            particles.flush(s->particlesPath());
+            for( auto& species : particles )
+                species.second.flush(species.first);
+        }
+
+        flushAttributes();
+    }
 }
 
 void
@@ -216,10 +217,10 @@ Iteration::read()
 
     /* Find the root point [Series] of this file,
      * meshesPath and particlesPath are stored there */
-    Writable *w = this;
+    Writable *w = getWritable(this);
     while( w->parent )
         w = w->parent;
-    Series* s = dynamic_cast<Series *>(w);
+    Series* s = dynamic_cast<Series *>(w->attributable);
 
     Parameter< Operation::LIST_PATHS > pList;
     std::string version = s->openPMD();
@@ -227,7 +228,7 @@ Iteration::read()
     bool hasParticles = false;
     if( version == "1.0.0" || version == "1.0.1" )
     {
-        IOHandler->enqueue(IOTask(&meshes, pList));
+        IOHandler->enqueue(IOTask(this, pList));
         IOHandler->flush();
         hasMeshes = std::count(
             pList.paths->begin(),
@@ -253,7 +254,6 @@ Iteration::read()
         Parameter< Operation::OPEN_PATH > pOpen;
         pOpen.path = s->meshesPath();
         IOHandler->enqueue(IOTask(&meshes, pOpen));
-        IOHandler->flush();
 
         meshes.readAttributes();
 
@@ -278,7 +278,7 @@ Iteration::read()
             if( value != end && shape != end )
             {
                 MeshRecordComponent& mrc = m[MeshRecordComponent::SCALAR];
-                mrc.m_isConstant = true;
+                *mrc.m_isConstant = true;
                 mrc.parent = m.parent;
                 mrc.abstractFilePosition = m.abstractFilePosition;
             }
@@ -298,8 +298,9 @@ Iteration::read()
             IOHandler->enqueue(IOTask(&m, dOpen));
             IOHandler->flush();
             MeshRecordComponent& mrc = m[MeshRecordComponent::SCALAR];
-            mrc.abstractFilePosition = m.abstractFilePosition;
             mrc.parent = m.parent;
+            IOHandler->enqueue(IOTask(&mrc, dOpen));
+            IOHandler->flush();
             mrc.written = false;
             mrc.resetDataset(Dataset(*dOpen.dtype, *dOpen.extent));
             mrc.written = true;
@@ -313,7 +314,6 @@ Iteration::read()
         Parameter< Operation::OPEN_PATH > pOpen;
         pOpen.path = s->particlesPath();
         IOHandler->enqueue(IOTask(&particles, pOpen));
-        IOHandler->flush();
 
         particles.readAttributes();
 
@@ -338,6 +338,14 @@ Iteration::read()
     meshes.written = true;
     particles.written = true;
     written = true;
+}
+
+void
+Iteration::linkHierarchy(std::shared_ptr< Writable > const& w)
+{
+    Attributable::linkHierarchy(w);
+    meshes.linkHierarchy(m_writable);
+    particles.linkHierarchy(m_writable);
 }
 
 
