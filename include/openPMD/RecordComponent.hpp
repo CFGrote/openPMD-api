@@ -1,3 +1,23 @@
+/* Copyright 2017-2018 Fabian Koller
+ *
+ * This file is part of openPMD-api.
+ *
+ * openPMD-api is free software: you can redistribute it and/or modify
+ * it under the terms of of either the GNU General Public License or
+ * the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * openPMD-api is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License and the GNU Lesser General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * and the GNU Lesser General Public License along with openPMD-api.
+ * If not, see <http://www.gnu.org/licenses/>.
+ */
 #pragma once
 
 #include "openPMD/backend/BaseRecordComponent.hpp"
@@ -47,10 +67,14 @@ public:
     RecordComponent& makeConstant(T);
 
     template< typename T >
+    std::shared_ptr< T > loadChunk(Offset const&,
+                   Extent const&,
+                   double targetUnitSI = std::numeric_limits< double >::quiet_NaN() );
+
+    template< typename T >
     void loadChunk(Offset const&,
                    Extent const&,
-                   std::unique_ptr< T[] >&,
-                   Allocation = Allocation::AUTO,
+                   std::shared_ptr< T >,
                    double targetUnitSI = std::numeric_limits< double >::quiet_NaN() );
     template< typename T >
     void storeChunk(Offset, Extent, std::shared_ptr< T >);
@@ -62,8 +86,8 @@ protected:
 
     void readBase();
 
-    std::queue< IOTask > m_chunks;
-    Attribute m_constantValue;
+    std::shared_ptr< std::queue< IOTask > > m_chunks;
+    std::shared_ptr< Attribute > m_constantValue;
 
 private:
     void flush(std::string const&);
@@ -78,18 +102,31 @@ RecordComponent::makeConstant(T value)
     if( written )
         throw std::runtime_error("A recordComponent can not (yet) be made constant after it has been written.");
 
-    m_constantValue = Attribute(value);
-    m_isConstant = true;
+    *m_constantValue = Attribute(value);
+    *m_isConstant = true;
     return *this;
 }
 
 template< typename T >
+inline std::shared_ptr< T >
+RecordComponent::loadChunk(Offset const& o, Extent const& e, double targetUnitSI)
+{
+    uint64_t numPoints = 1u;
+    for( auto const& dimensionSize : e )
+        numPoints *= dimensionSize;
+
+    auto newData = std::shared_ptr<T>(new T[numPoints], []( T *p ){ delete [] p; });
+    loadChunk(o, e, newData, targetUnitSI);
+    return newData;
+}
+
+template< typename T >
 inline void
-RecordComponent::loadChunk(Offset const& o, Extent const& e, std::unique_ptr< T[] >& data, Allocation alloc, double targetUnitSI)
+RecordComponent::loadChunk(Offset const& o, Extent const& e, std::shared_ptr< T > data, double targetUnitSI)
 {
     if( !std::isnan(targetUnitSI) )
         throw std::runtime_error("unitSI scaling during chunk loading not yet implemented");
-    Datatype dtype = determineDatatype(std::shared_ptr< T >());
+    Datatype dtype = determineDatatype(data);
     if( dtype != getDatatype() )
         throw std::runtime_error("Type conversion during chunk loading not yet implemented");
 
@@ -103,26 +140,18 @@ RecordComponent::loadChunk(Offset const& o, Extent const& e, std::unique_ptr< T[
                                      + " - DS: " + std::to_string(dse[i])
                                      + " - Chunk: " + std::to_string(o[i] + e[i])
                                      + ")");
-    if( Allocation::API == alloc && data )
-        throw std::runtime_error("Preallocated pointer passed with signaled API-allocation during chunk loading.");
-    else if( Allocation::USER == alloc && !data )
-        throw std::runtime_error("Unallocated pointer passed with signaled user-allocation during chunk loading.");
+    if( !data )
+        throw std::runtime_error("Unallocated pointer passed during chunk loading.");
 
-    size_t numPoints = 1;
-    for( auto const& dimensionSize : e )
-        numPoints *= dimensionSize;
-
-    if( (Allocation::AUTO == alloc && !data) || Allocation::API == alloc )
-        data = std::unique_ptr< T[] >(new T[numPoints]);
-    T* raw_ptr = data.get();
-
-    if( m_isConstant )
+    if( *m_isConstant )
     {
-        Parameter< Operation::READ_ATT > aRead;
-        aRead.name = "value";
-        IOHandler->enqueue(IOTask(this, aRead));
-        IOHandler->flush();
-        T value = Attribute(*aRead.resource).get< T >();
+        uint64_t numPoints = 1u;
+        for( auto const& dimensionSize : e )
+            numPoints *= dimensionSize;
+
+        T value = m_constantValue->get< T >();
+
+        T* raw_ptr = data.get();
         std::fill(raw_ptr, raw_ptr + numPoints, value);
     } else
     {
@@ -130,69 +159,16 @@ RecordComponent::loadChunk(Offset const& o, Extent const& e, std::unique_ptr< T[
         dRead.offset = o;
         dRead.extent = e;
         dRead.dtype = getDatatype();
-        dRead.data = raw_ptr;
-        IOHandler->enqueue(IOTask(this, dRead));
-        IOHandler->flush();
+        dRead.data = std::static_pointer_cast< void >(data);
+        m_chunks->push(IOTask(this, dRead));
     }
 }
-
-//template< typename T >
-//inline std::unique_ptr< T, std::function< void(T*) > >
-//RecordComponent::loadChunk(Offset o, Extent e, double targetUnitSI)
-//{
-//    if( targetUnitSI != 0. )
-//        throw std::runtime_error("unitSI scaling during chunk loading not yet implemented");
-//    Datatype dtype = determineDatatype(std::shared_ptr< T >());
-//    if( dtype != getDatatype() )
-//        throw std::runtime_error("Type conversion during chunk loading not implemented yet");
-//    uint8_t dim = getDimensionality();
-//    if( e.size() != dim || o.size() != dim )
-//        throw std::runtime_error("Dimensionality of chunk and dataset do not match.");
-//    Extent dse = getExtent();
-//    for( uint8_t i = 0; i < dim; ++i )
-//        if( dse[i] < o[i] + e[i] )
-//            throw std::runtime_error("Chunk does not reside inside dataset (Dimension on index " + std::to_string(i)
-//                                     + " - DS: " + std::to_string(dse[i])
-//                                     + " - Chunk: " + std::to_string(o[i] + e[i])
-//                                     + ")");
-//
-//    size_t numPoints = 1;
-//    for( auto const& dimensionSize : e )
-//        numPoints *= dimensionSize;
-//
-//    auto data = std::move(allocatePtr(getDatatype(), numPoints));
-//    void *ptr = data.get();
-//
-//    if( m_isConstant )
-//    {
-//        Parameter< Operation::READ_ATT > attribute_parameter;
-//        attribute_parameter.name = "value";
-//        IOHandler->enqueue(IOTask(this, attribute_parameter));
-//        IOHandler->flush();
-//        T* ptr = static_cast< T* >(data);
-//        T value = Attribute(*attribute_parameter.resource).get< T >();
-//        std::fill(ptr, ptr + numPoints, value);
-//    } else
-//    {
-//        Parameter< Operation::READ_DATASET > chunk_parameter;
-//        chunk_parameter.offset = o;
-//        chunk_parameter.extent = e;
-//        chunk_parameter.dtype = getDatatype();
-//        chunk_parameter.data = data;
-//        IOHandler->enqueue(IOTask(this, chunk_parameter));
-//        IOHandler->flush();
-//    }
-//
-//    T* ptr = static_cast< T* >(data);
-//    auto deleter = [](T* p){ delete[] p; p = nullptr; };
-//    return std::unique_ptr< T, decltype(deleter) >(ptr, deleter);
-//}
 
 template< typename T >
 inline void
 RecordComponent::storeChunk(Offset o, Extent e, std::shared_ptr<T> data)
 {
-    if( m_isConstant )
+    if( *m_isConstant )
         throw std::runtime_error("Chunks can not be written for a constant RecordComponent.");
     Datatype dtype = determineDatatype(data);
     if( dtype != getDatatype() )
@@ -213,7 +189,7 @@ RecordComponent::storeChunk(Offset o, Extent e, std::shared_ptr<T> data)
     dWrite.extent = e;
     dWrite.dtype = dtype;
     /* std::static_pointer_cast correctly reference-counts the pointer */
-    dWrite.data = std::static_pointer_cast< void >(data);
-    m_chunks.push(IOTask(this, dWrite));
+    dWrite.data = std::static_pointer_cast< void const >(data);
+    m_chunks->push(IOTask(this, dWrite));
 }
 } // openPMD

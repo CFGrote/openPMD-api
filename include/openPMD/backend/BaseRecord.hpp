@@ -1,3 +1,23 @@
+/* Copyright 2017-2018 Fabian Koller
+ *
+ * This file is part of openPMD-api.
+ *
+ * openPMD-api is free software: you can redistribute it and/or modify
+ * it under the terms of of either the GNU General Public License or
+ * the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * openPMD-api is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License and the GNU Lesser General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * and the GNU Lesser General Public License along with openPMD-api.
+ * If not, see <http://www.gnu.org/licenses/>.
+ */
 #pragma once
 
 #include "openPMD/backend/Container.hpp"
@@ -46,7 +66,7 @@ protected:
 
     void readBase();
 
-    bool m_containsScalar;
+    std::shared_ptr< bool > m_containsScalar;
 
 private:
     virtual void flush(std::string const&) override = 0;
@@ -62,7 +82,8 @@ BaseRecord< T_elem >::BaseRecord(BaseRecord const& b)
 
 template< typename T_elem >
 BaseRecord< T_elem >::BaseRecord()
-        : m_containsScalar{false}
+        : Container< T_elem >(),
+          m_containsScalar{std::make_shared< bool >(false)}
 {
     this->setAttribute("unitDimension",
                        std::array< double, 7 >{{0., 0., 0., 0., 0., 0., 0.}});
@@ -79,14 +100,15 @@ BaseRecord< T_elem >::operator[](key_type const& key)
     else
     {
         bool scalar = (key == RecordComponent::SCALAR);
-        if( (scalar && !Container< T_elem >::empty() && !m_containsScalar) || (m_containsScalar && !scalar) )
+        if( (scalar && !Container< T_elem >::empty() && !*m_containsScalar) || (*m_containsScalar && !scalar) )
             throw std::runtime_error("A scalar component can not be contained at "
-                                             "the same time as one or more regular components.");
+                                     "the same time as one or more regular components.");
 
-        mapped_type & ret = Container< T_elem >::operator[](key);
+        mapped_type& ret = Container< T_elem >::operator[](key);
         if( scalar )
         {
-            m_containsScalar = true;
+            *m_containsScalar = true;
+            ret.m_writable->parent = this->m_writable->parent;
             ret.parent = this->parent;
         }
         return ret;
@@ -103,14 +125,15 @@ BaseRecord< T_elem >::operator[](key_type&& key)
     else
     {
         bool scalar = (key == RecordComponent::SCALAR);
-        if( (scalar && !Container< T_elem >::empty() && !m_containsScalar) || (m_containsScalar && !scalar) )
+        if( (scalar && !Container< T_elem >::empty() && !*m_containsScalar) || (*m_containsScalar && !scalar) )
             throw std::runtime_error("A scalar component can not be contained at "
-                                             "the same time as one or more regular components.");
+                                     "the same time as one or more regular components.");
 
         mapped_type& ret = Container< T_elem >::operator[](std::move(key));
         if( scalar )
         {
-            m_containsScalar = true;
+            *m_containsScalar = true;
+            ret.m_writable->parent = this->m_writable->parent;
             ret.parent = this->parent;
         }
         return ret;
@@ -123,7 +146,7 @@ BaseRecord< T_elem >::erase(key_type const& key)
 {
     bool scalar = (key == RecordComponent::SCALAR);
     size_type res;
-    if( !scalar || (scalar && this->at(key).m_isConstant) )
+    if( !scalar || (scalar && *this->at(key).m_isConstant) )
         res = Container< T_elem >::erase(key);
     else
     {
@@ -141,8 +164,8 @@ BaseRecord< T_elem >::erase(key_type const& key)
     if( scalar )
     {
         this->written = false;
-        this->abstractFilePosition.reset();
-        this->m_containsScalar = false;
+        this->m_writable->abstractFilePosition.reset();
+        *this->m_containsScalar = false;
     }
     return res;
 }
@@ -166,6 +189,19 @@ BaseRecord< T_elem >::readBase()
     this->IOHandler->flush();
     if( *aRead.dtype == DT::ARR_DBL_7 )
         this->setAttribute("unitDimension", Attribute(*aRead.resource).template get< std::array< double, 7 > >());
+    else if( *aRead.dtype == DT::VEC_DOUBLE )
+    {
+        auto vec = Attribute(*aRead.resource).template get< std::vector< double > >();
+        if( vec.size() == 7 )
+        {
+            std::array< double, 7 > arr;
+            std::copy(vec.begin(),
+                      vec.end(),
+                      arr.begin());
+            this->setAttribute("unitDimension", arr);
+        } else
+            throw std::runtime_error("Unexpected Attribute datatype for 'unitDimension'");
+    }
     else
         throw std::runtime_error("Unexpected Attribute datatype for 'unitDimension'");
 

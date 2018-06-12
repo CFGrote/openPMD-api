@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -161,10 +161,10 @@ Mesh::setUnitDimension(std::map< UnitDimension, double > const& udim)
 {
     if( !udim.empty() )
     {
-        std::array< double, 7 > unitDimension = this->unitDimension();
+        std::array< double, 7 > tmpUnitDimension = this->unitDimension();
         for( auto const& entry : udim )
-            unitDimension[static_cast<uint8_t>(entry.first)] = entry.second;
-        setAttribute("unitDimension", unitDimension);
+            tmpUnitDimension[static_cast<uint8_t>(entry.first)] = entry.second;
+        setAttribute("unitDimension", tmpUnitDimension);
     }
     return *this;
 }
@@ -182,30 +182,38 @@ Mesh::setTimeOffset(T to)
 void
 Mesh::flush(std::string const& name)
 {
-    if( !written )
+    if( IOHandler->accessType == AccessType::READ_ONLY )
     {
-        if( m_containsScalar )
+        for( auto& comp : *this )
+            comp.second.flush(comp.first);
+    } else
+    {
+        if( !written )
         {
-            MeshRecordComponent& r = at(RecordComponent::SCALAR);
-            r.parent = parent;
-            r.flush(name);
-            abstractFilePosition = r.abstractFilePosition;
-            written = true;
-        } else
-        {
-            Parameter< Operation::CREATE_PATH > pCreate;
-            pCreate.path = name;
-            IOHandler->enqueue(IOTask(this, pCreate));
-            IOHandler->flush();
-            for( auto& comp : *this )
-                comp.second.parent = this;
+            if( *m_containsScalar )
+            {
+                MeshRecordComponent& r = at(RecordComponent::SCALAR);
+                r.m_writable->parent = parent;
+                r.parent = parent;
+                r.flush(name);
+                m_writable->abstractFilePosition = r.m_writable->abstractFilePosition;
+                abstractFilePosition = r.abstractFilePosition;
+                written = true;
+            } else
+            {
+                Parameter< Operation::CREATE_PATH > pCreate;
+                pCreate.path = name;
+                IOHandler->enqueue(IOTask(this, pCreate));
+                for( auto& comp : *this )
+                    comp.second.parent = this->m_writable.get();
+            }
         }
+
+        for( auto& comp : *this )
+            comp.second.flush(comp.first);
+
+        flushAttributes();
     }
-
-    for( auto& comp : *this )
-        comp.second.flush(comp.first);
-
-    flushAttributes();
 }
 
 void
@@ -222,17 +230,17 @@ Mesh::read()
     IOHandler->flush();
     if( *aRead.dtype == DT::STRING )
     {
-        std::string geometry = Attribute(*aRead.resource).get< std::string >();
-        if( "cartesian" == geometry )
+        std::string tmpGeometry = Attribute(*aRead.resource).get< std::string >();
+        if( "cartesian" == tmpGeometry )
             setGeometry(Geometry::cartesian);
-        else if( "thetaMode" == geometry )
+        else if( "thetaMode" == tmpGeometry )
             setGeometry(Geometry::thetaMode);
-        else if( "cylindrical" == geometry )
+        else if( "cylindrical" == tmpGeometry )
             setGeometry(Geometry::cylindrical);
-        else if( "spherical" == geometry )
+        else if( "spherical" == tmpGeometry )
             setGeometry(Geometry::spherical);
         else
-            throw std::runtime_error("Unkonwn geometry " + geometry);
+            throw std::runtime_error("Unkonwn geometry " + tmpGeometry);
     }
     else
         throw std::runtime_error("Unexpected Attribute datatype for 'geometry'");
@@ -244,11 +252,11 @@ Mesh::read()
         setDataOrder(static_cast<DataOrder>(Attribute(*aRead.resource).get< char >()));
     else if( *aRead.dtype == DT::STRING )
     {
-        std::string dataOrder = Attribute(*aRead.resource).get< std::string >();
-        if( dataOrder.size() == 1 )
-            setDataOrder(static_cast<DataOrder>(dataOrder[0]));
+        std::string tmpDataOrder = Attribute(*aRead.resource).get< std::string >();
+        if( tmpDataOrder.size() == 1 )
+            setDataOrder(static_cast<DataOrder>(tmpDataOrder[0]));
         else
-            throw std::runtime_error("Unexpected Attribute value for 'dataOrder': " + dataOrder);
+            throw std::runtime_error("Unexpected Attribute value for 'dataOrder': " + tmpDataOrder);
     }
     else
         throw std::runtime_error("Unexpected Attribute datatype for 'dataOrder'");
@@ -296,10 +304,10 @@ Mesh::read()
     else
         throw std::runtime_error("Unexpected Attribute datatype for 'gridUnitSI'");
 
-    if( m_containsScalar )
+    if( *m_containsScalar )
     {
         /* using operator[] will incorrectly update parent */
-        (*this).find(MeshRecordComponent::SCALAR)->second.read();
+        this->at(MeshRecordComponent::SCALAR).read();
     } else
     {
         clear_unchecked();
@@ -313,8 +321,7 @@ Mesh::read()
             MeshRecordComponent& rc = (*this)[component];
             pOpen.path = component;
             IOHandler->enqueue(IOTask(&rc, pOpen));
-            IOHandler->flush();
-            rc.m_isConstant = true;
+            *rc.m_isConstant = true;
             rc.read();
         }
 

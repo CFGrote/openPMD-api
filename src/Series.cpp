@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -18,128 +18,85 @@
  * and the GNU Lesser General Public License along with openPMD-api.
  * If not, see <http://www.gnu.org/licenses/>.
  */
+#include "openPMD/auxiliary/Filesystem.hpp"
 #include "openPMD/auxiliary/StringManip.hpp"
 #include "openPMD/IO/AbstractIOHandler.hpp"
 #include "openPMD/Series.hpp"
 
-#include <boost/filesystem.hpp>
-
 #include <iostream>
-#include <regex>
+
+#if defined(__GNUC__)
+#   if (__GNUC__ == 4 && __GNUC_MINOR__ < 9)
+#       define IS_GCC_48 1
+#   endif
+#endif
+
+#if defined(IS_GCC_48)
+#   include <regex.h>
+#else
+#   include <regex>
+#endif
 
 
 namespace openPMD
 {
-void
-check_extension(std::string const& filepath)
-{
-    if( !auxiliary::ends_with(filepath, ".h5") &&
-        !auxiliary::ends_with(filepath, ".bp") &&
-        !auxiliary::ends_with(filepath, ".dummy") )
-        throw std::runtime_error("File format not recognized. "
-                                 "Did you append a correct filename extension?");
-}
+/** Determine the storage format of a Series from the used filename extension.
+ *
+ * @param   filename    tring containing the filename.
+ * @return  Format that best fits the filename extension.
+ */
+Format determineFormat(std::string const& filename);
 
-#if openPMD_HAVE_MPI
-Series
-Series::create(std::string const& filepath,
-               MPI_Comm comm,
-               AccessType at)
-{
-    if( AccessType::READ_ONLY == at )
-        throw std::runtime_error("Access type not supported in create-API.");
+/** Remove the filename extension of a given storage format.
+ *
+ * @param   filename    String containing the filename, possibly with filename extension.
+ * @param   f           File format to remove filename extension for.
+ * @return  String containing the filename without filename extension.
+ */
+std::string cleanFilename(std::string const& filename, Format f);
 
-    check_extension(filepath);
-
-    return Series(filepath, at, comm);
-}
-#endif
-
-Series
-Series::create(std::string const& filepath,
-               AccessType at)
-{
-    if( AccessType::READ_ONLY == at )
-        throw std::runtime_error("Access type not supported in create-API.");
-
-    check_extension(filepath);
-
-    return Series(filepath, at);
-}
-
-#if openPMD_HAVE_MPI
-Series
-Series::read(std::string const& filepath,
-             MPI_Comm comm,
-             AccessType at)
-{
-    if( AccessType::CREATE == at )
-        throw std::runtime_error("Access type not supported in read-API.");
-
-    check_extension(filepath);
-
-    return Series(filepath, at, comm);
-}
-#endif
-
-Series
-Series::read(std::string const& filepath,
-             AccessType at)
-{
-    if( AccessType::CREATE == at )
-        throw std::runtime_error("Access type not supported in read-API.");
-
-    check_extension(filepath);
-
-    return Series(filepath, at);
-}
-
+/** Create a functor to determine if a file can be of a format given the filename on disk.
+ *
+ * @param   name        String containing desired filename without filename extension.
+ * @param   f           File format to check backend applicability for.
+ * @return  Functor returning true if file could be of type f. False otherwise.
+ */
+std::function< bool(std::string const&) > matcher(std::string const& name, Format f);
 
 #if openPMD_HAVE_MPI
 Series::Series(std::string const& filepath,
                AccessType at,
                MPI_Comm comm)
-        : iterations{Container< Iteration, uint64_t >()}
+        : iterations{Container< Iteration, uint64_t >()},
+          m_iterationEncoding{std::make_shared< IterationEncoding >()}
 {
-    std::string path;
-    std::string name;
+    std::string newPath;
+    std::string newName;
     auto const pos = filepath.find_last_of('/');
     if( std::string::npos == pos )
     {
-        path = "./";
-        name = filepath;
+        newPath = "./";
+        newName = filepath;
     }
     else
     {
-        path = filepath.substr(0, pos + 1);
-        name = filepath.substr(pos + 1);
+        newPath = filepath.substr(0, pos + 1);
+        newName = filepath.substr(pos + 1);
     }
 
     IterationEncoding ie;
-    if( std::string::npos != name.find("%T") )
+    if( std::string::npos != newName.find("%T") )
         ie = IterationEncoding::fileBased;
     else
         ie = IterationEncoding::groupBased;
 
-    Format f;
-    if( auxiliary::ends_with(name, ".h5") )
-        f = Format::HDF5;
-    else if( auxiliary::ends_with(name, ".bp") )
-        f = Format::ADIOS1;
-    else
-    {
-        if( !auxiliary::ends_with(name, ".dummy") )
-            std::cerr << "Unknown filename extension. "
-                         "Falling back to DUMMY format."
-                      << std::endl;
-        f = Format::DUMMY;
-    }
+    m_format = std::make_shared< Format >(determineFormat(newName));
 
-    IOHandler = AbstractIOHandler::createIOHandler(path, at, f, comm);
-    iterations.IOHandler = IOHandler;
-    iterations.parent = this;
+    m_writable->IOHandler = AbstractIOHandler::createIOHandler(newPath, at, *m_format, comm);
+    IOHandler = m_writable->IOHandler.get();
+    iterations.linkHierarchy(m_writable);
 
-    m_name = cleanFilename(name, f);
+    m_name = std::make_shared< std::string >(cleanFilename(newName, *m_format));
 
     switch( at )
     {
@@ -148,7 +105,7 @@ Series::Series(std::string const& filepath,
             setOpenPMD(OPENPMD);
             setOpenPMDextension(0);
             setAttribute("basePath", std::string(BASEPATH));
-            if( ie == IterationEncoding::fileBased && !auxiliary::contains(m_name, "%T") )
+            if( ie == IterationEncoding::fileBased && !auxiliary::contains(*m_name, "%T") )
                 throw std::runtime_error("For fileBased formats the iteration regex %T must be included in the file name");
             setIterationEncoding(ie);
             break;
@@ -156,10 +113,17 @@ Series::Series(std::string const& filepath,
         case AccessType::READ_ONLY:
         case AccessType::READ_WRITE:
         {
-            if( auxiliary::contains(m_name, "%T") )
+            /* Allow creation of values in Containers and setting of Attributes
+             * Would throw for AccessType::READ_ONLY */
+            auto newType = const_cast< AccessType* >(&m_writable->IOHandler->accessType);
+            *newType = AccessType::READ_WRITE;
+
+            if( auxiliary::contains(*m_name, "%T") )
                 readFileBased();
             else
                 readGroupBased();
+
+            *newType = at;
             break;
         }
     }
@@ -168,47 +132,36 @@ Series::Series(std::string const& filepath,
 
 Series::Series(std::string const& filepath,
                AccessType at)
-        : iterations{Container< Iteration, uint64_t >()}
+        : iterations{Container< Iteration, uint64_t >()},
+          m_iterationEncoding{std::make_shared< IterationEncoding >()}
 {
-    std::string path;
-    std::string name;
+    std::string newPath;
+    std::string newName;
     auto const pos = filepath.find_last_of('/');
     if( std::string::npos == pos )
     {
-        path = "./";
-        name = filepath;
+        newPath = "./";
+        newName = filepath;
     }
     else
     {
-        path = filepath.substr(0, pos + 1);
-        name = filepath.substr(pos + 1);
+        newPath = filepath.substr(0, pos + 1);
+        newName = filepath.substr(pos + 1);
     }
 
     IterationEncoding ie;
-    if( std::string::npos != name.find("%T") )
+    if( std::string::npos != newName.find("%T") )
         ie = IterationEncoding::fileBased;
     else
         ie = IterationEncoding::groupBased;
 
-    Format f;
-    if( auxiliary::ends_with(name, ".h5") )
-        f = Format::HDF5;
-    else if( auxiliary::ends_with(name, ".bp") )
-        f = Format::ADIOS1;
-    else
-    {
-        if( !auxiliary::ends_with(name, ".dummy") )
-            std::cerr << "Unknown filename extension. "
-                         "Falling back to DUMMY format."
-                      << std::endl;
-        f = Format::DUMMY;
-    }
+    m_format = std::make_shared< Format >(determineFormat(newName));
 
-    IOHandler = AbstractIOHandler::createIOHandler(path, at, f);
-    iterations.IOHandler = IOHandler;
-    iterations.parent = this;
+    m_writable->IOHandler = AbstractIOHandler::createIOHandler(newPath, at, *m_format);
+    IOHandler = m_writable->IOHandler.get();
+    iterations.linkHierarchy(m_writable);
 
-    m_name = cleanFilename(name, f);
+    m_name = std::make_shared< std::string >(cleanFilename(newName, *m_format));
 
     switch( at )
     {
@@ -217,7 +170,7 @@ Series::Series(std::string const& filepath,
             setOpenPMD(OPENPMD);
             setOpenPMDextension(0);
             setAttribute("basePath", std::string(BASEPATH));
-            if( ie == IterationEncoding::fileBased && !auxiliary::contains(m_name, "%T") )
+            if( ie == IterationEncoding::fileBased && !auxiliary::contains(*m_name, "%T") )
                 throw std::runtime_error("For fileBased formats the iteration regex %T must be included in the file name");
             setIterationEncoding(ie);
             break;
@@ -225,10 +178,17 @@ Series::Series(std::string const& filepath,
         case AccessType::READ_ONLY:
         case AccessType::READ_WRITE:
         {
-            if( auxiliary::contains(m_name, "%T") )
+            /* Allow creation of values in Containers and setting of Attributes
+             * Would throw for AccessType::READ_ONLY */
+            auto newType = const_cast< AccessType* >(&m_writable->IOHandler->accessType);
+            *newType = AccessType::READ_WRITE;
+
+            if( auxiliary::contains(*m_name, "%T") )
                 readFileBased();
             else
                 readGroupBased();
+
+            *newType = at;
             break;
         }
     }
@@ -237,7 +197,6 @@ Series::Series(std::string const& filepath,
 Series::~Series()
 {
     flush();
-    IOHandler->flush();
 }
 
 std::string
@@ -296,7 +255,7 @@ Series::setMeshesPath(std::string const& mp)
                     [](Container< Iteration, uint64_t >::value_type const& i){ return i.second.meshes.written; }) )
         throw std::runtime_error("A files meshesPath can not (yet) be changed after it has been written.");
 
-    if( auxiliary::ends_with(mp, "/") )
+    if( auxiliary::ends_with(mp, '/') )
         setAttribute("meshesPath", mp);
     else
         setAttribute("meshesPath", mp + "/");
@@ -317,7 +276,7 @@ Series::setParticlesPath(std::string const& pp)
                     [](Container< Iteration, uint64_t >::value_type const& i){ return i.second.particles.written; }) )
         throw std::runtime_error("A files particlesPath can not (yet) be changed after it has been written.");
 
-    if( auxiliary::ends_with(pp, "/") )
+    if( auxiliary::ends_with(pp, '/') )
         setAttribute("particlesPath", pp);
     else
         setAttribute("particlesPath", pp + "/");
@@ -384,9 +343,9 @@ Series::softwareDependencies() const
 }
 
 Series&
-Series::setSoftwareDependencies(std::string const &softwareDependencies)
+Series::setSoftwareDependencies(std::string const &newSoftwareDependencies)
 {
-    setAttribute("softwareDependencies", softwareDependencies);
+    setAttribute("softwareDependencies", newSoftwareDependencies);
     return *this;
 }
 
@@ -397,16 +356,16 @@ Series::machine() const
 }
 
 Series&
-Series::setMachine(std::string const &machine)
+Series::setMachine(std::string const &newMachine)
 {
-    setAttribute("machine", machine);
+    setAttribute("machine", newMachine);
     return *this;
 }
 
 IterationEncoding
 Series::iterationEncoding() const
 {
-    return m_iterationEncoding;
+    return *m_iterationEncoding;
 }
 
 Series&
@@ -415,11 +374,11 @@ Series::setIterationEncoding(IterationEncoding ie)
     if( written )
         throw std::runtime_error("A files iterationEncoding can not (yet) be changed after it has been written.");
 
-    m_iterationEncoding = ie;
+    *m_iterationEncoding = ie;
     switch( ie )
     {
         case IterationEncoding::fileBased:
-            setIterationFormat(m_name);
+            setIterationFormat(*m_name);
             setAttribute("iterationEncoding", std::string("fileBased"));
             break;
         case IterationEncoding::groupBased:
@@ -443,7 +402,7 @@ Series::setIterationFormat(std::string const& i)
     if( written )
         throw std::runtime_error("A files iterationFormat can not (yet) be changed after it has been written.");
 
-    if( m_iterationEncoding == IterationEncoding::groupBased )
+    if( *m_iterationEncoding == IterationEncoding::groupBased )
     {
         if( basePath() != i && (openPMD() == "1.0.1" || openPMD() == "1.0.0") )
             throw std::invalid_argument("iterationFormat must not differ from basePath " + basePath() + " for groupBased data");
@@ -455,7 +414,7 @@ Series::setIterationFormat(std::string const& i)
 std::string
 Series::name() const
 {
-    return m_name;
+    return *m_name;
 }
 
 Series&
@@ -464,10 +423,10 @@ Series::setName(std::string const& n)
     if( written )
         throw std::runtime_error("A files name can not (yet) be changed after it has been written.");
 
-    if( m_iterationEncoding == IterationEncoding::fileBased && !auxiliary::contains(m_name, "%T") )
+    if( *m_iterationEncoding == IterationEncoding::fileBased && !auxiliary::contains(*m_name, "%T") )
             throw std::runtime_error("For fileBased formats the iteration regex %T must be included in the file name");
 
-    m_name = n;
+    *m_name = n;
     dirty = true;
     return *this;
 }
@@ -475,20 +434,18 @@ Series::setName(std::string const& n)
 void
 Series::flush()
 {
-    if( IOHandler->accessType == AccessType::READ_WRITE ||
-        IOHandler->accessType == AccessType::CREATE )
+    switch( *m_iterationEncoding )
     {
-        switch( m_iterationEncoding )
-        {
-            using IE = IterationEncoding;
-            case IE::fileBased:
-                flushFileBased();
-                break;
-            case IE::groupBased:
-                flushGroupBased();
-                break;
-        }
+        using IE = IterationEncoding;
+        case IE::fileBased:
+            flushFileBased();
+            break;
+        case IE::groupBased:
+            flushGroupBased();
+            break;
     }
+
+    IOHandler->flush();
 }
 
 void
@@ -497,51 +454,64 @@ Series::flushFileBased()
     if( iterations.empty() )
         throw std::runtime_error("fileBased output can not be written with no iterations.");
 
-    for( auto& i : iterations )
+    if( IOHandler->accessType == AccessType::READ_ONLY )
+        for( auto& i : iterations )
+            i.second.flush();
+    else
     {
-        /* as there is only one series,
-         * emulate the file belonging to each iteration as not yet written */
-        written = false;
-        iterations.written = false;
-
-        i.second.flushFileBased(i.first);
-
-        iterations.flush(auxiliary::replace_first(basePath(), "%T/", ""));
-
-        if( dirty )
+        for( auto& i : iterations )
         {
-            flushAttributes();
-            /* manually flag the Series dirty
-             * until all iterations have been updated */
-            dirty = true;
+            /* as there is only one series,
+             * emulate the file belonging to each iteration as not yet written */
+            written = false;
+            iterations.written = false;
+
+            i.second.flushFileBased(i.first);
+
+            iterations.flush(auxiliary::replace_first(basePath(), "%T/", ""));
+
+            if( dirty )
+            {
+                flushAttributes();
+                /* manually flag the Series dirty
+                 * until all iterations have been updated */
+                dirty = true;
+            }
+            IOHandler->flush();
         }
+        dirty = false;
     }
-    dirty = false;
 }
 
 void
 Series::flushGroupBased()
 {
-    if( !written )
+    if( IOHandler->accessType == AccessType::READ_ONLY )
+        for( auto& i : iterations )
+            i.second.flush();
+    else
     {
-        Parameter< Operation::CREATE_FILE > fCreate;
-        fCreate.name = m_name;
-        IOHandler->enqueue(IOTask(this, fCreate));
-        IOHandler->flush();
+        if( !written )
+        {
+            Parameter< Operation::CREATE_FILE > fCreate;
+            fCreate.name = *m_name;
+            IOHandler->enqueue(IOTask(this, fCreate));
+        }
+
+        iterations.flush(auxiliary::replace_first(basePath(), "%T/", ""));
+
+        for( auto& i : iterations )
+        {
+            if( !i.second.written )
+            {
+                i.second.m_writable->parent = getWritable(&iterations);
+                i.second.parent = getWritable(&iterations);
+            }
+            i.second.flushGroupBased(i.first);
+        }
+
+        flushAttributes();
     }
-
-    if( !iterations.written )
-        iterations.parent = this;
-    iterations.flush(auxiliary::replace_first(basePath(), "%T/", ""));
-
-    for( auto& i : iterations )
-    {
-        if( !i.second.written )
-            i.second.parent = &iterations;
-        i.second.flushGroupBased(i.first);
-    }
-
-    flushAttributes();
 }
 
 void
@@ -554,7 +524,6 @@ Series::flushMeshesPath()
     aWrite.resource = a.getResource();
     aWrite.dtype = a.dtype;
     IOHandler->enqueue(IOTask(this, aWrite));
-    IOHandler->flush();
 }
 
 void
@@ -567,29 +536,25 @@ Series::flushParticlesPath()
     aWrite.resource = a.getResource();
     aWrite.dtype = a.dtype;
     IOHandler->enqueue(IOTask(this, aWrite));
-    IOHandler->flush();
 }
 
 void
 Series::readFileBased()
 {
-    std::regex pattern(auxiliary::replace_first(m_name, "%T", "[[:digit:]]+"));
-
     Parameter< Operation::OPEN_FILE > fOpen;
     Parameter< Operation::READ_ATT > aRead;
 
-    using namespace boost::filesystem;
-    path dir = path(IOHandler->directory);
-    if( !exists(dir) )
+    if( !auxiliary::directory_exists(IOHandler->directory) )
         throw no_such_file_error("Supplied directory is not valid: " + IOHandler->directory);
-    for( path const& entry : directory_iterator(dir) )
+    auto isPartOfSeries = matcher(*m_name, *m_format);
+    for( auto const& entry : auxiliary::list_directory(IOHandler->directory) )
     {
-        if( std::regex_search(entry.filename().string(), pattern) )
+        if( isPartOfSeries(entry) )
         {
-            fOpen.name = entry.filename().string();
+            fOpen.name = entry;
             IOHandler->enqueue(IOTask(this, fOpen));
             IOHandler->flush();
-            iterations.parent = this;
+            iterations.parent = getWritable(this);
 
             /* allow all attributes to be set */
             written = false;
@@ -604,10 +569,10 @@ Series::readFileBased()
             {
                 std::string encoding = Attribute(*aRead.resource).get< std::string >();
                 if( encoding == "fileBased" )
-                    m_iterationEncoding = IterationEncoding::fileBased;
+                    *m_iterationEncoding = IterationEncoding::fileBased;
                 else if( encoding == "groupBased" )
                 {
-                    m_iterationEncoding = IterationEncoding::groupBased;
+                    *m_iterationEncoding = IterationEncoding::groupBased;
                     std::cerr << "Series constructor called with iteration regex '%T' suggests loading a "
                               << "time series with fileBased iteration encoding. Loaded file is groupBased.\n";
                 } else
@@ -629,6 +594,9 @@ Series::readFileBased()
         }
     }
 
+    if( iterations.empty() )
+        throw no_such_file_error("No matching iterations found: " + name());
+
     /* this file need not be flushed */
     iterations.written = true;
     written = true;
@@ -638,7 +606,7 @@ void
 Series::readGroupBased()
 {
     Parameter< Operation::OPEN_FILE > fOpen;
-    fOpen.name = m_name;
+    fOpen.name = *m_name;
     IOHandler->enqueue(IOTask(this, fOpen));
     IOHandler->flush();
 
@@ -656,10 +624,10 @@ Series::readGroupBased()
     {
         std::string encoding = Attribute(*aRead.resource).get< std::string >();
         if( encoding == "groupBased" )
-            m_iterationEncoding = IterationEncoding::groupBased;
+            *m_iterationEncoding = IterationEncoding::groupBased;
         else if( encoding == "fileBased" )
         {
-            m_iterationEncoding = IterationEncoding::fileBased;
+            *m_iterationEncoding = IterationEncoding::fileBased;
             std::cerr << "Series constructor called with explicit iteration suggests loading a "
                       << "single file with groupBased iteration encoding. Loaded file is fileBased.\n";
         } else
@@ -768,7 +736,6 @@ Series::read()
     else
         throw std::runtime_error("Unknown openPMD version - " + version);
     IOHandler->enqueue(IOTask(&iterations, pOpen));
-    IOHandler->flush();
 
     iterations.readAttributes();
 
@@ -782,32 +749,75 @@ Series::read()
         Iteration& i = iterations[std::stoull(it)];
         pOpen.path = it;
         IOHandler->enqueue(IOTask(&i, pOpen));
-        IOHandler->flush();
         i.read();
     }
 
     readAttributes();
 }
 
+Format
+determineFormat(std::string const& filename)
+{
+    if( auxiliary::ends_with(filename, ".h5") )
+        return Format::HDF5;
+    if( auxiliary::ends_with(filename, ".bp") )
+        return Format::ADIOS1;
+
+    if( std::string::npos != filename.find('.') /* extension is provided */ )
+      std::cerr << "Unknown storage format. "
+                   "Did you append a correct filename extension? "
+                   "Your IO operations will be NOOPS!" << std::endl;
+    return Format::DUMMY;
+}
+
 std::string
-Series::cleanFilename(std::string s, Format f)
+cleanFilename(std::string const& filename, Format f)
 {
     switch( f )
     {
         case Format::HDF5:
-            s = auxiliary::replace_last(s, ".h5", "");
-            break;
+            return auxiliary::replace_last(filename, ".h5", "");
         case Format::ADIOS1:
         case Format::ADIOS2:
-            s = auxiliary::replace_last(s, ".bp", "");
-            break;
-        case Format::DUMMY:
-            s = auxiliary::replace_last(s, ".dummy", "");
-            break;
+            return auxiliary::replace_last(filename, ".bp", "");
         default:
-            break;
+            return filename;
     }
+}
 
-    return s;
+bool
+nameMatch(std::string const& filename, std::string const& nameReg)
+{
+#if defined(IS_GCC_48)
+    regex_t pattern;
+    int reti = regcomp(&pattern, nameReg.c_str(), REG_EXTENDED);
+    if( reti )
+        throw std::runtime_error(std::string("Regex for name '") + nameReg + std::string("' can not be compiled!"));
+    return !regexec(&pattern, filename.c_str(), 0, NULL, 0);
+#else
+    std::regex pattern(nameReg);
+    return std::regex_search(filename, pattern);
+#endif
+}
+
+std::function< bool(std::string const&) >
+matcher(std::string const& name, Format f)
+{
+    switch( f )
+    {
+        case Format::HDF5:
+        {
+            std::string nameReg = auxiliary::replace_last(name + ".h5$", "%T", "[[:digit:]]+");
+            return [nameReg](std::string const& filename) -> bool { return nameMatch(filename, nameReg); };
+        }
+        case Format::ADIOS1:
+        case Format::ADIOS2:
+        {
+            std::string nameReg = auxiliary::replace_last(name + ".bp$", "%T", "[[:digit:]]+");
+            return [nameReg](std::string const& filename) -> bool { return nameMatch(filename, nameReg); };
+        }
+        default:
+            return [](std::string const&) -> bool { return false; };
+    }
 }
 } // openPMD

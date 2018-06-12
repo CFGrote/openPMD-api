@@ -29,7 +29,7 @@ using namespace openPMD;
 
 int main()
 {
-    Series series = Series::read(
+    Series series = Series(
         "../samples/git-sample/data%T.h5",
         AccessType::READ_ONLY
     );
@@ -41,7 +41,7 @@ int main()
         cout << "\n\t" << i.first;
     cout << '\n';
 
-    Iteration &i = series.iterations[100];
+    Iteration i = series.iterations[100];
     cout << "Iteration 100 contains " << i.meshes.size() << " meshes:";
     for( auto const& m : i.meshes )
         cout << "\n\t" << m.first;
@@ -51,7 +51,7 @@ int main()
         cout << "\n\t" << ps.first;
     cout << '\n';
 
-    MeshRecordComponent &E_x = i.meshes["E"]["x"];
+    MeshRecordComponent E_x = i.meshes["E"]["x"];
     Extent extent = E_x.getExtent();
     cout << "Field E/x has shape (";
     for( auto const& dim : extent )
@@ -60,8 +60,7 @@ int main()
 
     Offset chunk_offset = {1, 1, 1};
     Extent chunk_extent = {2, 2, 1};
-    std::unique_ptr< double[] > chunk_data;
-    E_x.loadChunk(chunk_offset, chunk_extent, chunk_data);
+    auto chunk_data = E_x.loadChunk<double>(chunk_offset, chunk_extent);
     cout << "Queued the loading of a single chunk from disk, "
             "ready to execute\n";
     series.flush();
@@ -72,7 +71,7 @@ int main()
         for( size_t col = 0; col < chunk_extent[1]; ++col )
             cout << "\t"
                  << '(' << row + chunk_offset[0] << '|' << col + chunk_offset[1] << '|' << 1 << ")\t"
-                 << chunk_data[row*chunk_extent[1]+col];
+                 << chunk_data.get()[row*chunk_extent[1]+col];
         cout << '\n';
     }
 

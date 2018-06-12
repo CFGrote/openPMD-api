@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -31,6 +31,24 @@
 
 namespace openPMD
 {
+namespace traits
+{
+    /** Container Element Creation Policy
+     *
+     * The operator() of this policy is called after the container
+     * ::insert of a new element. The passed parameter is an iterator to the
+     * newly added element.
+     */
+    template< typename U >
+    struct GenerationPolicy
+    {
+        template< typename T >
+        void operator()(T &)
+        {
+        }
+    };
+} // traits
+
 /** @brief Map-like container that enforces openPMD requirements and handles IO.
  *
  * @see http://en.cppreference.com/w/cpp/container/map
@@ -46,7 +64,7 @@ template<
 >
 class Container : public Attributable
 {
-    static_assert(std::is_base_of< Writable, T >::value, "Type of container element must be derived from Writable");
+    static_assert(std::is_base_of< Attributable, T >::value, "Type of container element must be derived from Writable");
     using InternalContainer = T_container;
 
     friend class Iteration;
@@ -67,19 +85,22 @@ public:
     using iterator = typename InternalContainer::iterator;
     using const_iterator = typename InternalContainer::const_iterator;
 
+    Container()
+        : m_container{std::make_shared< InternalContainer >()}
+    { }
     virtual ~Container() { }
 
-    iterator begin() noexcept { return m_container.begin(); }
-    const_iterator begin() const noexcept { return m_container.begin(); }
-    const_iterator cbegin() const noexcept { return m_container.cbegin(); }
+    iterator begin() noexcept { return m_container->begin(); }
+    const_iterator begin() const noexcept { return m_container->begin(); }
+    const_iterator cbegin() const noexcept { return m_container->cbegin(); }
 
-    iterator end() noexcept { return m_container.end(); }
-    const_iterator end() const noexcept { return m_container.end(); }
-    const_iterator cend() const noexcept { return m_container.cend(); }
+    iterator end() noexcept { return m_container->end(); }
+    const_iterator end() const noexcept { return m_container->end(); }
+    const_iterator cend() const noexcept { return m_container->cend(); }
 
-    bool empty() const noexcept { return m_container.empty(); }
+    bool empty() const noexcept { return m_container->empty(); }
 
-    size_type size() const noexcept { return m_container.size(); }
+    size_type size() const noexcept { return m_container->size(); }
 
     /** Remove all objects from the container and (if written) from disk.
      *
@@ -94,62 +115,81 @@ public:
         clear_unchecked();
     }
 
-    std::pair< iterator, bool > insert(value_type const& value) { return m_container.insert(value); }
+    std::pair< iterator, bool > insert(value_type const& value) { return m_container->insert(value); }
     template< class P >
-    std::pair< iterator, bool > insert(P&& value) { return m_container.insert(value); }
-    iterator insert(const_iterator hint, value_type const& value) { return m_container.insert(hint, value); }
+    std::pair< iterator, bool > insert(P&& value) { return m_container->insert(value); }
+    iterator insert(const_iterator hint, value_type const& value) { return m_container->insert(hint, value); }
     template< class P >
-    iterator insert(const_iterator hint, P&& value) { return m_container.insert(hint, value); }
+    iterator insert(const_iterator hint, P&& value) { return m_container->insert(hint, value); }
     template< class InputIt >
-    void insert(InputIt first, InputIt last) { m_container.insert(first, last); }
-    void insert(std::initializer_list< value_type > ilist) { m_container.insert(ilist); }
+    void insert(InputIt first, InputIt last) { m_container->insert(first, last); }
+    void insert(std::initializer_list< value_type > ilist) { m_container->insert(ilist); }
 
-    void swap(Container & other) { m_container.swap(other.m_container); }
+    void swap(Container & other) { m_container->swap(other.m_container); }
 
-    mapped_type& at(key_type const& key) { return m_container.at(key); }
-    mapped_type const& at(key_type const& key) const { return m_container.at(key); }
+    mapped_type& at(key_type const& key) { return m_container->at(key); }
+    mapped_type const& at(key_type const& key) const { return m_container->at(key); }
 
+public:
     /** Access the value that is mapped to a key equivalent to key, creating it if such key does not exist already.
      *
      * @param   key Key of the element to find (lvalue).
      * @return  Reference to the mapped value of the new element if no element with key key existed. Otherwise a reference to the mapped value of the existing element whose key is equivalent to key.
+     * @throws  std::out_of_range error if in READ_ONLY mode and key does not exist, otherwise key will be created
      */
     virtual mapped_type& operator[](key_type const& key)
     {
-        auto it = m_container.find(key);
-        if( it != m_container.end() )
+        auto it = m_container->find(key);
+        if( it != m_container->end() )
             return it->second;
         else
         {
+            if( AccessType::READ_ONLY == IOHandler->accessType )
+            {
+                auxiliary::OutOfRangeMsg const out_of_range_msg;
+                throw std::out_of_range(out_of_range_msg(key));
+            }
+
             T t = T();
-            t.IOHandler = IOHandler;
-            t.parent = this;
-            return m_container.insert({key, std::move(t)}).first->second;
+            t.linkHierarchy(m_writable);
+            auto& ret = m_container->insert({key, std::move(t)}).first->second;
+            traits::GenerationPolicy< T > gen;
+            gen(ret);
+            return ret;
         }
     }
     /** Access the value that is mapped to a key equivalent to key, creating it if such key does not exist already.
      *
      * @param   key Key of the element to find (rvalue).
      * @return  Reference to the mapped value of the new element if no element with key key existed. Otherwise a reference to the mapped value of the existing element whose key is equivalent to key.
+     * @throws  std::out_of_range error if in READ_ONLY mode and key does not exist, otherwise key will be created
      */
     virtual mapped_type& operator[](key_type&& key)
     {
-        auto it = m_container.find(key);
-        if( it != m_container.end() )
+        auto it = m_container->find(key);
+        if( it != m_container->end() )
             return it->second;
         else
         {
+            if( AccessType::READ_ONLY == IOHandler->accessType )
+            {
+                auxiliary::OutOfRangeMsg out_of_range_msg;
+                throw std::out_of_range(out_of_range_msg(key));
+            }
+
             T t = T();
-            t.IOHandler = IOHandler;
-            t.parent = this;
-            return m_container.insert({std::move(key), std::move(t)}).first->second;
+            t.linkHierarchy(m_writable);
+            auto& ret = m_container->insert({std::move(key), std::move(t)}).first->second;
+            traits::GenerationPolicy< T > gen;
+            gen(ret);
+            return ret;
         }
     }
 
-    size_type count(key_type const& key) const { return m_container.count(key); }
+    size_type count(key_type const& key) const { return m_container->count(key); }
 
-    iterator find(key_type const& key) { return m_container.find(key); }
-    const_iterator find(key_type const& key) const { return m_container.find(key); }
+    iterator find(key_type const& key) { return m_container->find(key); }
+    const_iterator find(key_type const& key) const { return m_container->find(key); }
 
     /** Remove a single element from the container and (if written) from disk.
      *
@@ -163,15 +203,15 @@ public:
         if( AccessType::READ_ONLY == IOHandler->accessType )
             throw std::runtime_error("Can not erase from a container in a read-only Series.");
 
-        auto res = m_container.find(key);
-        if( res != m_container.end() && res->second.written )
+        auto res = m_container->find(key);
+        if( res != m_container->end() && res->second.written )
         {
             Parameter< Operation::DELETE_PATH > pDelete;
             pDelete.path = ".";
             IOHandler->enqueue(IOTask(&res->second, pDelete));
             IOHandler->flush();
         }
-        return m_container.erase(key);
+        return m_container->erase(key);
     }
 
     //! @todo why does const_iterator not work compile with pybind11?
@@ -180,14 +220,14 @@ public:
         if( AccessType::READ_ONLY == IOHandler->accessType )
             throw std::runtime_error("Can not erase from a container in a read-only Series.");
 
-        if( res != m_container.end() && res->second.written )
+        if( res != m_container->end() && res->second.written )
         {
             Parameter< Operation::DELETE_PATH > pDelete;
             pDelete.path = ".";
             IOHandler->enqueue(IOTask(&res->second, pDelete));
             IOHandler->flush();
         }
-        return m_container.erase(res);
+        return m_container->erase(res);
     }
     //! @todo add also:
     // virtual iterator erase(const_iterator first, const_iterator last)
@@ -196,18 +236,18 @@ public:
     auto emplace(Args&&... args)
     -> decltype(InternalContainer().emplace(std::forward<Args>(args)...))
     {
-        return m_container.emplace(std::forward<Args>(args)...);
+        return m_container->emplace(std::forward<Args>(args)...);
     }
 
 protected:
-    InternalContainer m_container;
+    std::shared_ptr< InternalContainer > m_container;
 
     void clear_unchecked()
     {
         if( written )
             throw std::runtime_error("Clearing a written container not (yet) implemented.");
 
-        m_container.clear();
+        m_container->clear();
     }
 
     virtual void flush(std::string const& path)
@@ -217,10 +257,10 @@ protected:
             Parameter< Operation::CREATE_PATH > pCreate;
             pCreate.path = path;
             IOHandler->enqueue(IOTask(this, pCreate));
-            IOHandler->flush();
         }
 
         flushAttributes();
     }
 };
+
 } // openPMD

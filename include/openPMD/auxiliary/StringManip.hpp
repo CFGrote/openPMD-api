@@ -1,6 +1,28 @@
+/* Copyright 2017-2018 Fabian Koller
+ *
+ * This file is part of openPMD-api.
+ *
+ * openPMD-api is free software: you can redistribute it and/or modify
+ * it under the terms of of either the GNU General Public License or
+ * the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * openPMD-api is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License and the GNU Lesser General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * and the GNU Lesser General Public License along with openPMD-api.
+ * If not, see <http://www.gnu.org/licenses/>.
+ */
 #pragma once
 
 #include <algorithm>
+#include <iterator>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -17,23 +39,41 @@ contains(std::string const &s,
 }
 
 inline bool
+contains(std::string const &s,
+         char const infix)
+{
+    return s.find(infix) != std::string::npos;
+}
+
+inline bool
 starts_with(std::string const &s,
             std::string const &prefix)
 {
-    if( s.size() >= prefix.size() )
-        return (0 == s.compare(0, prefix.size(), prefix));
-    else
-        return false;
+    return (s.size() >= prefix.size()) &&
+           (0 == s.compare(0, prefix.size(), prefix));
+}
+
+inline bool
+starts_with(std::string const &s,
+            char const prefix)
+{
+    return !s.empty() &&
+           s[0] == prefix;
 }
 
 inline bool
 ends_with(std::string const &s,
           std::string const &suffix)
 {
-    if( s.size() >= suffix.size() )
-        return (0 == s.compare(s.size() - suffix.size(), suffix.size(), suffix));
-    else
-        return false;
+    return (s.size() >= suffix.size()) &&
+           (0 == s.compare(s.size() - suffix.size(), suffix.size(), suffix));
+}
+
+inline bool
+ends_with(std::string const &s,
+          char const suffix)
+{
+    return !s.empty() && s.back() == suffix;
 }
 
 inline std::string
@@ -110,6 +150,25 @@ strip(std::string s, std::vector< char > to_remove)
     s.shrink_to_fit();
 
     return s;
+}
+
+inline std::string
+join(std::vector< std::string > const& vs, std::string const& delimiter)
+{
+    switch( vs.size() )
+    {
+        case 0:
+            return "";
+        case 1:
+            return vs[0];
+        default:
+            std::ostringstream ss;
+            std::copy(vs.begin(),
+                      vs.end() - 1,
+                      std::ostream_iterator< std::string >(ss, delimiter.c_str()));
+            ss << *(vs.end() - 1);
+            return ss.str();
+    }
 }
 } // auxiliary
 } // openPMD

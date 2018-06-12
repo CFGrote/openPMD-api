@@ -1,4 +1,4 @@
-/* Copyright 2017 Fabian Koller
+/* Copyright 2017-2018 Fabian Koller
  *
  * This file is part of openPMD-api.
  *
@@ -28,10 +28,10 @@
 #   include <mpi.h>
 #endif
 
-#include <stdexcept>
-#include <memory>
 #include <future>
+#include <memory>
 #include <queue>
+#include <stdexcept>
 #include <string>
 
 
@@ -74,7 +74,7 @@ class AbstractIOHandler
 {
 public:
 #if openPMD_HAVE_MPI
-    /** Construct an appropriate specific IOHandler for the desired IO mode.
+    /** Construct an appropriate specific IOHandler for the desired IO mode that may be MPI-aware.
      *
      * @param   path        Path to root folder for all operations associated with the desired handler.
      * @param   accessType  AccessType describing desired operations and permissions of the desired handler.

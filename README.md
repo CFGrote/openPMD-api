@@ -1,24 +1,31 @@
-openPMD - API for Developers
-============================
+C++ & Python API for Scientific I/O with openPMD
+================================================
 
 [![Supported openPMD Standard](https://img.shields.io/badge/openPMD-1.0.0--1.1.0-blue.svg)](https://github.com/openPMD/openPMD-standard/releases)
 [![Documentation Status](https://readthedocs.org/projects/openpmd-api/badge/?version=latest)](http://openpmd-api.readthedocs.io/en/latest/?badge=latest)
-[![Code Status dev](https://img.shields.io/travis/openPMD/openPMD-api/dev.svg?label=dev)](https://travis-ci.org/openPMD/openPMD-api/branches)
-[![Language](https://img.shields.io/badge/language-C%2B%2B11-orange.svg)](https://isocpp.org/)
-[![Language](https://img.shields.io/badge/language-Python3-orange.svg)](https://www.python.org/)
-![Development Phase](https://img.shields.io/badge/phase-unstable-yellow.svg)
+[![Doxygen](https://img.shields.io/badge/API-Doxygen-blue.svg)](http://www.openpmd.org/openPMD-api)
+[![Linux/OSX Build Status dev](https://img.shields.io/travis/openPMD/openPMD-api/dev.svg?label=dev)](https://travis-ci.org/openPMD/openPMD-api/branches)
+[![Windows Build Status dev](https://ci.appveyor.com/api/projects/status/x95q4n620pqk0e0t/branch/dev?svg=true)](https://ci.appveyor.com/project/ax3l/openpmd-api/branch/dev)
 [![License](https://img.shields.io/badge/license-LGPLv3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0.html)
+[![DOI](https://rodare.hzdr.de/badge/DOI/10.14278/rodare.27.svg)](https://doi.org/10.14278/rodare.27)
 
-This is project is in development.
+[![C++11][api-cpp]](https://isocpp.org/) ![C++11 API: Alpha][dev-alpha]
+[![Python3][api-py3]](https://www.python.org/) ![Python3 API: Unstable][dev-unstable]
+![Supported Platforms][api-platforms]
 
-It will provide a C++ and Python API for openPMD writing and reading, both in serial and parallel (MPI).
-Initial backends will include ADIOS and HDF5.
+This library provides a common high-level API for openPMD writing and reading.
+It provides a common interface to I/O libraries and file formats such as HDF5 and ADIOS.
+Where supported, openPMD-api implements both serial and MPI parallel I/O capabilities.
+
+[api-cpp]: https://img.shields.io/badge/language-C%2B%2B11-yellowgreen.svg "C++11 API"
+[api-py3]: https://img.shields.io/badge/language-Python3-yellow.svg "Python3 API"
+[dev-alpha]: https://img.shields.io/badge/phase-alpha-yellowgreen.svg "Status: Alpha"
+[dev-unstable]: https://img.shields.io/badge/phase-unstable-yellow.svg "Status: Unstable"
+[api-platforms]: https://img.shields.io/badge/platforms-linux%20|%20osx%20|%20win-blue.svg "Supported Platforms"
 
 ## Usage
 
 ### C++
-
-*Syntax not yet implemented as shown below*
 
 ```cpp
 #include <openPMD/openPMD.hpp>
@@ -27,7 +34,7 @@ Initial backends will include ADIOS and HDF5.
 
 // ...
 
-auto s = openPMD::Series::read("output_files/data%T.h5");
+auto s = openPMD::Series("output_files/data%T.h5", openPMD::AccessType::READ_ONLY);
 
 std::cout << "Read iterations...";
 for( auto const& i : s.iterations )
@@ -58,13 +65,13 @@ for( auto const& i : s.iterations )
 
 ### Python
 
-```python
-from openPMD import Series
+```py
+import openPMD
 
 
 # ...
 
-series = Series.read("output_files/data%T.h5")
+series = openPMD.Series("output_files/data%T.h5", openPMD.Access_Type.read_only)
 
 print("Read iterations...")
 for k, i in series.iterations.items():
@@ -85,22 +92,22 @@ for k, i in series.iterations.items():
 ### More!
 
 Curious?
-Our manual shows full [read & write examples](https://openpmd-api.readthedocs.io/en/latest/usage/firststeps.html), both serial an MPI-parallel!
+Our manual shows full [read & write examples](https://openpmd-api.readthedocs.io/en/latest/usage/firststeps.html), both serial and MPI-parallel!
 
 ## Dependencies
 
 Required:
 * CMake 3.10.0+
-* Boost 1.62.0+: `filesystem`, `system`
+* C++11 capable compiler, e.g. g++ 4.9+, clang 3.9+, VS 2015+
 
 Shipped internally:
 * [MPark.Variant](https://github.com/mpark/variant) 1.3.0+
 * [Catch2](https://github.com/catchorg/Catch2) 2.2.1+
 
 Optional I/O backends:
-* HDF5 1.8.6+
-* ADIOS 1.10+ (*not yet implemented*)
-* ADIOS 2.1+ (*not yet implemented*)
+* [HDF5](https://support.hdfgroup.org/HDF5) 1.8.13+
+* [ADIOS1](https://www.olcf.ornl.gov/center-projects/adios) 1.13.1+
+* [ADIOS2](https://github.com/ornladios/ADIOS2) 2.1+ (*not yet implemented*)
 
 while those can be build either with or without:
 * MPI 2.3+, e.g. OpenMPI or MPICH2
@@ -108,30 +115,37 @@ while those can be build either with or without:
 Optional language bindings:
 * Python:
   * Python 3.X+
-  * pybind11 2.3.0+
+  * pybind11 2.2.1+
+
+* Python (*not yet implemented*):
   * mpi4py?
   * numpy-dev?
   * xtensor-python 0.17.0+?
 
 ## Installation
 
-[![Spack Package](https://img.shields.io/badge/spack.io-notyet-yellow.svg)](https://spack.io)
-[![Conda Package](https://img.shields.io/badge/conda.io-notyet-yellow.svg)](https://conda.io)
+[![Spack Package](https://img.shields.io/badge/spack.io-openpmd--api-brightgreen.svg)](https://spack.io)
+[![Conda Package](https://img.shields.io/badge/conda.io-openpmd--api-brightgreen.svg)](https://anaconda.org/conda-forge/openpmd-api)
 
 Choose *one* of the install methods below to get started:
 
-### Spack
-
-*not yet implemented*
+### [Spack](http://spack.io)
 
 ```bash
+# optional: append +python
 spack install openpmd-api
-spack load openpmd-api
+spack load --dependencies openpmd-api
 ```
 
-### Conda
+### [Conda](https://conda.io)
 
-*not yet implemented*
+[![Conda Version](https://img.shields.io/conda/vn/conda-forge/openpmd-api.svg)](https://anaconda.org/conda-forge/openpmd-api)
+[![Conda Downloads](https://img.shields.io/conda/dn/conda-forge/openpmd-api.svg)](https://anaconda.org/conda-forge/openpmd-api)
+
+```bash
+# serial version only
+conda install -c conda-forge openpmd-api
+```
 
 ### From Source
 
@@ -164,16 +178,18 @@ sudo make install
 The following options can be added to the `cmake` call to control features.
 CMake controls options with prefixed `-D`, e.g. `-DopenPMD_USE_MPI=OFF`:
 
-| CMake Option         | Values           | Description                            |
-|----------------------|------------------|----------------------------------------|
-| `openPMD_USE_MPI`    | **AUTO**/ON/OFF  | Enable MPI support                     |
-| `openPMD_USE_HDF5`   | **AUTO**/ON/OFF  | Enable support for HDF5                |
-| `openPMD_USE_ADIOS1` | **AUTO**/ON/OFF  | Enable support for ADIOS1 <sup>1</sup> |
-| `openPMD_USE_ADIOS2` | AUTO/ON/**OFF**  | Enable support for ADIOS2 <sup>1</sup> |
-| `openPMD_USE_PYTHON` | **AUTO**/ON/OFF  | Enable Python bindings                 |
-| `PYTHON_EXECUTABLE`  | (first found)    | Path to Python executable              |
+| CMake Option                 | Values           | Description                                            |
+|------------------------------|------------------|--------------------------------------------------------|
+| `openPMD_USE_MPI`            | **AUTO**/ON/OFF  | Enable MPI support                                     |
+| `openPMD_USE_HDF5`           | **AUTO**/ON/OFF  | Enable support for HDF5                                |
+| `openPMD_USE_ADIOS1`         | **AUTO**/ON/OFF  | Enable support for ADIOS1                              |
+| `openPMD_USE_ADIOS2`         | AUTO/ON/**OFF**  | Enable support for ADIOS2 <sup>1</sup>                 |
+| `openPMD_USE_PYTHON`         | **AUTO**/ON/OFF  | Enable Python bindings                                 |
+| `openPMD_USE_INVASIVE_TESTS` | **AUTO**/ON/OFF  | Enable unit tests that modify source code <sup>2</sup> |
+| `PYTHON_EXECUTABLE`          | (first found)    | Path to Python executable                              |
 
 <sup>1</sup> *not yet implemented*
+<sup>2</sup> *e.g. C++ keywords, currently disabled only for MSVC*
 
 Additionally, the following libraries are shipped internally.
 The following options allow to switch to external installs:
@@ -181,6 +197,7 @@ The following options allow to switch to external installs:
 | CMake Option                   | Values     | Library       | Version |
 |--------------------------------|------------|---------------|---------|
 | `openPMD_USE_INTERNAL_VARIANT` | **ON**/OFF | MPark.Variant |  1.3.0+ |
+| `openPMD_USE_INTERNAL_CATCH`   | **ON**/OFF | Catch2        |  2.2.1+ |
 
 By default, this will build as a static library (`libopenPMD.a`) and installs also its headers.
 In order to build a static library, append `-DBUILD_SHARED_LIBS=ON` to the `cmake` command.
@@ -189,8 +206,8 @@ You can only build a static or a shared library at a time.
 By default, the `Release` version is built.
 In order to build with debug symbols, pass `-DCMAKE_BUILD_TYPE=Debug` to your `cmake` command.
 
-By default, tests are built.
-In order to skip building tests, pass `-DBUILD_TESTING=OFF` to your `cmake` command.
+By default, tests and examples are built.
+In order to skip building those, pass `-DBUILD_TESTING=OFF` or `-DBUILD_EXAMPLES` to your `cmake` command.
 
 ## Linking to your project
 
@@ -209,11 +226,10 @@ export CMAKE_PREFIX_PATH=$HOME/somepath:$CMAKE_PREFIX_PATH
 
 Use the following lines in your projects `CMakeLists.txt`:
 ```cmake
-# supports:                       COMPONENTS MPI HDF5 ADIOS1 ADIOS2
+# supports:                       COMPONENTS MPI NOMPI HDF5 ADIOS1 ADIOS2
 find_package(openPMD 0.1.0 CONFIG)
 
 if(openPMD_FOUND)
     target_link_libraries(YourTarget PRIVATE openPMD::openPMD)
 endif()
 ```
-

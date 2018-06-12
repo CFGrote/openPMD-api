@@ -1,7 +1,7 @@
 #include <openPMD/openPMD.hpp>
 
+#include <algorithm>
 #include <iostream>
-#include <boost/filesystem.hpp>
 
 
 using namespace openPMD;
@@ -9,8 +9,7 @@ using namespace openPMD;
 void
 write()
 {
-    Series o = Series::create("../samples/serial_write.h5");
-
+    Series o = Series("../samples/serial_write.h5", AccessType::CREATE);
     ParticleSpecies& e = o.iterations[1].particles["e"];
 
     std::vector< double > position_global(4);
@@ -45,7 +44,7 @@ write()
 void
 write2()
 {
-    Series f = Series::create("./working/directory/2D_simData.h5");
+    Series f = Series("./working/directory/2D_simData.h5", AccessType::CREATE);
 
     // all required openPMD attributes will be set to reasonable default values (all ones, all zeros, empty strings,...)
     // manually setting them enforces the openPMD standard
@@ -143,10 +142,15 @@ write2()
     d = Dataset(dtype, mpiDims);
     electrons["positionOffset"]["x"].resetDataset(d);
 
+    Dataset dset = Dataset(Datatype::UINT64, {2});
+    electrons.particlePatches["numParticles"][RecordComponent::SCALAR].resetDataset(dset);
+    electrons.particlePatches["numParticlesOffset"][RecordComponent::SCALAR].resetDataset(dset);
+
+    dset = Dataset(Datatype::FLOAT, {2});
     electrons.particlePatches["offset"].setUnitDimension({{UnitDimension::L, 1}});
-    electrons.particlePatches["offset"]["x"].resetDatatype(Datatype::UINT64);
+    electrons.particlePatches["offset"]["x"].resetDataset(dset);
     electrons.particlePatches["extent"].setUnitDimension({{UnitDimension::L, 1}});
-    electrons.particlePatches["extent"]["x"].resetDatatype(Datatype::UINT64);
+    electrons.particlePatches["extent"]["x"].resetDataset(dset);
 
     // at any point in time you may decide to dump already created output to disk
     // note that this will make some operations impossible (e.g. renaming files)
@@ -184,8 +188,11 @@ write2()
         electrons["position"]["x"].storeChunk(o, e, partial_particlePos);
         electrons["positionOffset"]["x"].storeChunk(o, e, partial_particleOff);
 
-        electrons.particlePatches["offset"]["x"][{numParticlesOffset, numParticles}] = i;
-        electrons.particlePatches["extent"]["x"][{numParticlesOffset, numParticles}] = 1;
+        electrons.particlePatches["numParticles"][RecordComponent::SCALAR].store(i, numParticles);
+        electrons.particlePatches["numParticlesOffset"][RecordComponent::SCALAR].store(i, numParticlesOffset);
+
+        electrons.particlePatches["offset"]["x"].store(i, particle_position[numParticlesOffset]);
+        electrons.particlePatches["extent"]["x"].store(i, particle_position[numParticlesOffset + numParticles - 1] - particle_position[numParticlesOffset]);
     }
 
     mesh["y"].resetDataset(d);
@@ -200,7 +207,7 @@ write2()
 void
 w()
 {
-    Series o = Series::create("../samples/serial_write_%T.h5");
+    Series o = Series("../samples/serial_write_%T.h5", AccessType::CREATE);
 }
 
 int
